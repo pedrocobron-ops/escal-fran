@@ -1,8 +1,9 @@
-import { useRef, useState } from 'react';
-import { WEEKDAY_LABEL } from '../../domain';
+import { useEffect, useRef, useState } from 'react';
+import { WEEKDAY_LABEL, diffDays, formatDate, todayIso } from '../../domain';
 import { BackupError, backupFileName, exportBackup, parseBackup } from '../../store/storage';
 import { useData, useStore } from '../../store/useStore';
-import { Notice, useConfirm } from '../common/Modal';
+import { Modal, Notice, useConfirm } from '../common/Modal';
+import { downloadBlob } from '../common/download';
 
 export function SettingsScreen() {
   const data = useData();
@@ -10,8 +11,17 @@ export function SettingsScreen() {
   const replace = useStore((s) => s.replace);
   const resetToSeed = useStore((s) => s.resetToSeed);
   const confirm = useConfirm();
+  const markBackup = useStore((s) => s.markBackup);
+  const lastBackupAt = useStore((s) => s.lastBackupAt);
   const fileRef = useRef<HTMLInputElement>(null);
   const [notice, setNotice] = useState<{ title: string; message: string } | null>(null);
+  const [exported, setExported] = useState<{ url: string; name: string } | null>(null);
+  const [rulesText, setRulesText] = useState(data.rules.join('\n'));
+  useEffect(() => setRulesText(data.rules.join('\n')), [data.rules]);
+  useEffect(() => {
+    if (!exported) return;
+    return () => URL.revokeObjectURL(exported.url);
+  }, [exported]);
 
   const toggleDay = (d: number) => {
     apply((x) => {
@@ -21,12 +31,10 @@ export function SettingsScreen() {
 
   const download = () => {
     const blob = new Blob([exportBackup(data)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = backupFileName();
-    a.click();
-    URL.revokeObjectURL(url);
+    const name = backupFileName();
+    const url = downloadBlob(blob, name);
+    markBackup();
+    setExported({ url, name });
   };
 
   const onFile = async (file: File | undefined) => {
@@ -77,6 +85,11 @@ export function SettingsScreen() {
       <section className="card">
         <h2>Backup</h2>
         <p className="muted small">Os dados ficam salvos só neste navegador. Exporte um arquivo de vez em quando e guarde num lugar seguro. Para usar em outro computador, importe o arquivo lá.</p>
+        <p className="small">
+          {lastBackupAt
+            ? `Último backup exportado em ${formatDate(lastBackupAt)} (${diffDays(lastBackupAt, todayIso())} dia(s) atrás).`
+            : 'Nenhum backup exportado neste navegador ainda.'}
+        </p>
         <div className="toolbar" style={{ marginBottom: 0 }}>
           <button className="btn primary" onClick={download}>Exportar backup (JSON)</button>
           <button className="btn" onClick={() => fileRef.current?.click()}>Importar backup...</button>
@@ -96,12 +109,26 @@ export function SettingsScreen() {
         <textarea
           rows={6}
           style={{ width: '100%', padding: 8, border: '1px solid var(--line-strong)', borderRadius: 6 }}
-          value={data.rules.join('\n')}
-          onChange={(e) => apply((x) => { x.rules = e.target.value.split('\n'); })}
-          onBlur={() => apply((x) => { x.rules = x.rules.map((r) => r.trim()).filter(Boolean); })}
+          value={rulesText}
+          onChange={(e) => setRulesText(e.target.value)}
+          onBlur={() => {
+            const rules = rulesText.split('\n').map((r) => r.trim()).filter(Boolean);
+            if (rules.join('\n') !== data.rules.join('\n')) apply((x) => { x.rules = rules; });
+            else setRulesText(rules.join('\n'));
+          }}
         />
       </section>
 
+      {exported && (
+        <Modal title="Backup exportado" onClose={() => setExported(null)}>
+          <p><strong>{exported.name}</strong>. Se o download não começou sozinho, use o botão abaixo.</p>
+          <div className="modal-actions" style={{ justifyContent: 'flex-start' }}>
+            <a className="btn primary" href={exported.url} download={exported.name}>Baixar backup</a>
+            <span style={{ flex: 1 }} />
+            <button className="btn" onClick={() => setExported(null)}>Fechar</button>
+          </div>
+        </Modal>
+      )}
       {notice && <Notice title={notice.title} message={notice.message} onClose={() => setNotice(null)} />}
     </div>
   );

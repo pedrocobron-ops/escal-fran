@@ -4,6 +4,8 @@ import { canAssign, nextProteseRecords, todayIso } from '../domain';
 import { loadInitial, seedData, type StorageAdapter } from './storage';
 
 const HISTORY_LIMIT = 100;
+export const LAST_BACKUP_KEY = 'escala-ceo:last-backup';
+export const FIRST_CHANGE_KEY = 'escala-ceo:first-change';
 
 export type Mutator = (draft: AppData) => void;
 
@@ -17,6 +19,10 @@ interface StoreState {
   past: AppData[];
   future: AppData[];
   adapter: StorageAdapter | null;
+  /** Data ISO do último backup exportado neste navegador. */
+  lastBackupAt: IsoDate | null;
+  /** Data ISO da primeira mudança feita neste navegador (para o lembrete de backup). */
+  firstChangeAt: IsoDate | null;
 
   init(adapter: StorageAdapter): Promise<void>;
   /** Aplica uma mutação com desfazer/refazer e salva. */
@@ -28,6 +34,23 @@ interface StoreState {
   canUndo(): boolean;
   canRedo(): boolean;
   resetToSeed(): void;
+  markBackup(): void;
+}
+
+function readKey(key: string): IsoDate | null {
+  try {
+    return typeof window === 'undefined' ? null : window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeKey(key: string, value: string): void {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // sem localStorage: fica só em memória
+  }
 }
 
 function clock(now: Date = new Date()): string {
@@ -53,8 +76,12 @@ export const useStore = create<StoreState>((set, get) => {
   }
 
   function commit(next: AppData, opts: { pushHistory: boolean }) {
-    const { data, past } = get();
-    next.protese = nextProteseRecords(next, todayIso());
+    const { data, past, firstChangeAt } = get();
+    if (!firstChangeAt) {
+      const today = todayIso();
+      writeKey(FIRST_CHANGE_KEY, today);
+      set({ firstChangeAt: today });
+    }
     set({
       data: next,
       past: opts.pushHistory && data ? [...past.slice(-(HISTORY_LIMIT - 1)), data] : past,
@@ -72,6 +99,8 @@ export const useStore = create<StoreState>((set, get) => {
     past: [],
     future: [],
     adapter: null,
+    lastBackupAt: readKey(LAST_BACKUP_KEY),
+    firstChangeAt: readKey(FIRST_CHANGE_KEY),
 
     async init(adapter) {
       const { data, fromSeed } = await loadInitial(adapter);
@@ -89,7 +118,9 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     replace(data) {
-      commit(structuredClone(data), { pushHistory: true });
+      const next = structuredClone(data);
+      next.protese = nextProteseRecords(next, todayIso());
+      commit(next, { pushHistory: true });
     },
 
     undo() {
@@ -113,6 +144,12 @@ export const useStore = create<StoreState>((set, get) => {
 
     resetToSeed() {
       get().replace(seedData());
+    },
+
+    markBackup() {
+      const today = todayIso();
+      writeKey(LAST_BACKUP_KEY, today);
+      set({ lastBackupAt: today });
     },
   };
 });
@@ -181,7 +218,7 @@ export function removeDentist(draft: AppData, dentistId: Id): void {
 export function removeRoom(draft: AppData, roomId: Id): void {
   draft.rooms = draft.rooms.filter((r) => r.id !== roomId);
   draft.base.slots = draft.base.slots.filter((s) => !(s.kind === 'sala' && s.roomId === roomId));
-  draft.dentists = draft.dentists.filter((d) => d.roomId !== roomId);
+  for (const d of draft.dentists.filter((x) => x.roomId === roomId)) removeDentist(draft, d.id);
   draft.tasks = draft.tasks.filter((t) => !(t.assignment.mode === 'room' && t.assignment.roomId === roomId));
 }
 

@@ -1,8 +1,10 @@
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import './styles.css';
 import { LocalStorageAdapter } from './store/storage';
 import { useStore } from './store/useStore';
 import { ConfirmProvider } from './ui/common/Modal';
+import { ErrorBoundary } from './ui/common/ErrorBoundary';
+import { diffDays, todayIso } from './domain';
 import { ROUTES, href, useHashRoute, type Route } from './ui/router';
 import { Board } from './ui/board/Board';
 import { TasksScreen } from './ui/tasks/TasksScreen';
@@ -53,7 +55,10 @@ export function App() {
         </nav>
         <SaveIndicator />
       </header>
-      <main className="app-main">{loaded ? SCREENS[route]() : <p className="muted">Carregando...</p>}</main>
+      {loaded && <BackupReminder />}
+      <ErrorBoundary>
+        <main className="app-main">{loaded ? SCREENS[route]() : <p className="muted">Carregando...</p>}</main>
+      </ErrorBoundary>
     </ConfirmProvider>
   );
 }
@@ -66,4 +71,30 @@ function SaveIndicator() {
   if (saving) return <span className="save-indicator">Salvando...</span>;
   if (savedAt) return <span className="save-indicator">Salvo às {savedAt}</span>;
   return <span className="save-indicator">Salvamento automático ativo</span>;
+}
+
+const BACKUP_REMINDER_DAYS = 7;
+
+/** Faixa discreta quando faz tempo que o backup não é exportado. Some ao fechar, até a próxima abertura. */
+function BackupReminder() {
+  const lastBackupAt = useStore((s) => s.lastBackupAt);
+  const firstChangeAt = useStore((s) => s.firstChangeAt);
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed) return null;
+  // Conta a partir do último backup ou, se nunca houve, da primeira mudança feita aqui.
+  const ref = lastBackupAt ?? firstChangeAt;
+  if (!ref) return null;
+  const days = diffDays(ref, todayIso());
+  if (days < BACKUP_REMINDER_DAYS) return null;
+  return (
+    <div className="backup-bar" role="status">
+      <span>
+        {lastBackupAt ? `Faz ${days} dias que você não exporta um backup.` : `Você mexe na escala há ${days} dias e ainda não exportou um backup.`}{' '}
+        Os dados ficam só neste computador.
+      </span>
+      <span className="spacer" />
+      <a className="btn sm" href={href('ajustes')}>Exportar agora</a>
+      <button className="btn sm icon" onClick={() => setDismissed(true)} aria-label="Fechar lembrete">×</button>
+    </div>
+  );
 }

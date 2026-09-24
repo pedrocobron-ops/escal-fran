@@ -4,27 +4,12 @@ import { MONTH_LABEL, todayIso } from '../domain';
 import { useData } from '../store/useStore';
 import type { YearMonth } from '../ui/common/MonthPicker';
 import { Modal, Notice } from '../ui/common/Modal';
+import { downloadBlob } from '../ui/common/download';
 
 interface Ready {
   url: string;
   name: string;
   size: number;
-}
-
-/** Tenta baixar automaticamente. Alguns navegadores bloqueiam; o modal com o link cobre esses casos. */
-function tryAutoDownload(url: string, name: string): boolean {
-  try {
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = name;
-    a.rel = 'noopener';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function formatSize(bytes: number): string {
@@ -46,8 +31,7 @@ export function PdfButtons({ ym }: { ym: YearMonth }) {
   }, [ready]);
 
   const finish = (blob: Blob, name: string) => {
-    const url = URL.createObjectURL(blob);
-    tryAutoDownload(url, name);
+    const url = downloadBlob(blob, name);
     setReady({ url, name, size: blob.size });
   };
 

@@ -53,7 +53,8 @@ export function DayPdf({ m }: { m: DayPdfModel }) {
           ))}
         </View>
 
-        <Text style={s.h2} break>Escala das ASBs no dia</Text>
+        <View wrap={false}>
+        <Text style={s.h2}>Escala das ASBs no dia</Text>
         <View style={s.table}>
           <View style={[s.row, s.head]}>
             <Text style={[s.cell, { flexBasis: 70, flexGrow: 0 }]}>ASB</Text>
@@ -72,8 +73,9 @@ export function DayPdf({ m }: { m: DayPdfModel }) {
             </View>
           ))}
         </View>
+        </View>
 
-        <Text style={s.h2}>Tarefas do dia</Text>
+        <Text style={s.h2} minPresenceAhead={60}>Tarefas do dia</Text>
         {m.tasks.length === 0 ? (
           <Text style={s.muted}>Nenhuma tarefa neste dia.</Text>
         ) : (

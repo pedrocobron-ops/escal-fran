@@ -4,7 +4,7 @@ import type { Absence, AppData, Asb, EffectiveDay, IsoDate, Task } from '../doma
 import {
   HOURS, OPEN_END, OPEN_START, SLOT_KIND_LABEL, WEEKDAY_LABEL, WEEKDAY_SHORT, absencesBetween, analyze, baseDay, dentistsAt,
   effectiveDay, firstOfMonth, formatDate, formatDayMonth, formatMonth, formatRange, isExternalSubstitute, isTeamSubstitute,
-  lastOfMonth, monthRotation, resolveTask, weekdayOf, weeksOfMonth,
+  lastOfMonth, monthRotation, resolveTask, todayIso, weekdayOf, weeksOfMonth,
 } from '../domain';
 
 const AFTERNOON_START = 13;
@@ -111,6 +111,10 @@ export function asbRows(data: AppData, day: EffectiveDay = baseDay(data)): AsbRo
     .filter((a) => a.active)
     .sort((a, b) => a.start - b.start || a.name.localeCompare(b.name))
     .map((asb) => {
+      const absence = day.absences.find((a) => a.asbId === asb.id);
+      if (absence) {
+        return { name: asb.name, contract: formatRange(asb.start, asb.end), morning: `Ausente (${absence.reason})`, lunch: '-', afternoon: `Ausente (${absence.reason})` };
+      }
       const lunch = day.slots.find((s) => s.who.type === 'asb' && s.who.asbId === asb.id && s.kind === 'almoco');
       const morning = HOURS.filter((h) => h < AFTERNOON_START);
       const afternoon = HOURS.filter((h) => h >= AFTERNOON_START);
@@ -184,12 +188,8 @@ export function monthPdfModel(data: AppData, year: number, month: number, now: D
     monthlyRows,
     rules: data.rules,
     absences,
-    generatedAt: `Gerado em ${formatDate(isoOf(now))} às ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
+    generatedAt: `Gerado em ${formatDate(todayIso(now))} às ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
   };
-}
-
-function isoOf(d: Date): IsoDate {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 export interface DayPdfModel {
@@ -247,7 +247,7 @@ export function dayPdfModel(data: AppData, date: IsoDate, now: Date = new Date()
     asbRows: asbRows(data, day),
     tasks,
     alerts,
-    generatedAt: `Gerado em ${formatDate(isoOf(now))} às ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
+    generatedAt: `Gerado em ${formatDate(todayIso(now))} às ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
   };
 }
 

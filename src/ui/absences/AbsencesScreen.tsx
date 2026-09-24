@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import type { Absence, AbsenceReason } from '../../domain';
 import {
   ABSENCE_REASONS, WEEKDAY_SHORT, absencesBetween, addDays, firstOfMonth, formatDate, isBetween, isExternalSubstitute,
-  isTeamSubstitute, lastOfMonth, mondayOf, todayIso, weekdayOf,
+  isTeamSubstitute, lastOfMonth, mondayOf, overlappingAbsences, todayIso, weekdayOf,
 } from '../../domain';
 import { newId, useData, useStore } from '../../store/useStore';
 import { colorMap } from '../colors';
@@ -134,6 +134,11 @@ function AbsenceForm({ absence, onClose, onSave }: { absence?: Absence; onClose:
     if (!asbId) return setError('Escolha a ASB.');
     if (!from || !to) return setError('Informe o período.');
     if (to < from) return setError('A data final precisa ser igual ou depois da inicial.');
+    const clash = overlappingAbsences(data, asbId, from, to, absence?.id);
+    if (clash.length > 0) {
+      const c = clash[0];
+      return setError(`Já existe uma ausência dessa ASB nesse período (${c.reason}, ${formatDate(c.from)} a ${formatDate(c.to)}). Edite ou remova a existente.`);
+    }
     if (cover === 'team' && !subId) return setError('Escolha quem cobre.');
     if (cover === 'team' && subId === asbId) return setError('A substituta não pode ser a própria ausente.');
     if (cover === 'external' && !external.trim()) return setError('Informe o nome de quem cobre.');

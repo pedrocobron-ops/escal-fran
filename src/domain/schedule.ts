@@ -1,6 +1,7 @@
 // Escala efetiva de um dia (5.1) e validações (5.2).
 
 import type {
+  Absence,
   Alert,
   AppData,
   Asb,
@@ -14,7 +15,7 @@ import type {
   UncoveredSlot,
 } from './types';
 import { HOURS, SLOT_KIND_LABEL } from './types';
-import { weekdayOf, monthsSince } from './dates';
+import { diffDays, weekdayOf } from './dates';
 import { absencesOn, isExternalSubstitute, isTeamSubstitute } from './absences';
 import { formatHour, formatRange, hoursBetween } from './time';
 
@@ -68,7 +69,11 @@ export function effectiveDay(data: AppData, date: IsoDate): EffectiveDay {
   const open = data.openDays.includes(weekday);
   const activeIds = new Set(data.asbs.filter((a) => a.active).map((a) => a.id));
   const asbById = new Map(data.asbs.map((a) => [a.id, a]));
-  const absences = absencesOn(data, date).filter((a) => activeIds.has(a.asbId));
+  // Uma ausência por ASB no dia: se houver sobreposição, vale a primeira cadastrada.
+  const absences: Absence[] = [];
+  for (const a of absencesOn(data, date)) {
+    if (activeIds.has(a.asbId) && !absences.some((x) => x.asbId === a.asbId)) absences.push(a);
+  }
   const absentIds = new Set(absences.map((a) => a.asbId));
 
   // 1. Base, só de ASBs ativas e presentes.
@@ -307,6 +312,13 @@ export function analyzeDate(data: AppData, date: IsoDate): Alert[] {
 
 // ---- Regra da Prótese (1 mês fixa) ----
 
+/** "1 mês" contado em dias corridos, para 30/09 e 01/10 não valerem como um mês. */
+export const PROTESE_MIN_DAYS = 30;
+
+export function proteseMonthElapsed(since: IsoDate, today: IsoDate): boolean {
+  return diffDays(since, today) >= PROTESE_MIN_DAYS;
+}
+
 export function isProteseDentist(d: Dentist): boolean {
   return /pr[oó]tese/i.test(d.specialty);
 }
@@ -338,7 +350,7 @@ export function proteseAlerts(data: AppData, today: IsoDate): Alert[] {
     if (!dentist) continue;
     const current = asbWithDentistInBase(data, dentist);
     if (!current || current === rec.asbId) continue;
-    if (monthsSince(rec.since, today) >= 1) continue;
+    if (proteseMonthElapsed(rec.since, today)) continue;
     const prev = data.asbs.find((a) => a.id === rec.asbId)?.name ?? rec.asbId;
     const now = data.asbs.find((a) => a.id === current)?.name ?? current;
     alerts.push({
@@ -355,7 +367,9 @@ export function proteseAlerts(data: AppData, today: IsoDate): Alert[] {
 /**
  * Histórico da Prótese atualizado: registra a ASB atual quando não há registro
  * ou quando o registro já completou 1 mês. Mantém o registro antigo enquanto o
- * mês não fecha, para o aviso continuar aparecendo.
+ * mês não fecha, para o aviso continuar aparecendo. Deve rodar uma vez por
+ * carregamento (não a cada mudança), senão um estado intermediário do quadro
+ * vira o registro.
  */
 export function nextProteseRecords(data: AppData, today: IsoDate): AppData['protese'] {
   const out: NonNullable<AppData['protese']> = [];
@@ -366,7 +380,7 @@ export function nextProteseRecords(data: AppData, today: IsoDate): AppData['prot
       if (rec) out.push(rec);
       continue;
     }
-    if (!rec || (rec.asbId !== current && monthsSince(rec.since, today) >= 1)) {
+    if (!rec || (rec.asbId !== current && proteseMonthElapsed(rec.since, today))) {
       out.push({ dentistId: dentist.id, asbId: current, since: today });
     } else {
       out.push(rec);

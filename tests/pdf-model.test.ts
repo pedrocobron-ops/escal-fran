@@ -83,3 +83,13 @@ describe('modelo do PDF do dia', () => {
     expect(m.tasks).toEqual([]);
   });
 });
+
+describe('PDF do dia com ASB ausente', () => {
+  it('mostra "Ausente (motivo)" em vez de escala vazia', () => {
+    const d = seed();
+    d.absences.push(absence({ asbId: ID.laura, from: '2026-09-14', to: '2026-09-14', reason: 'Férias' }));
+    const m = dayPdfModel(d, '2026-09-14');
+    const laura = m.asbRows.find((r) => r.name === 'Laura')!;
+    expect(laura).toEqual({ name: 'Laura', contract: '07h–16h', morning: 'Ausente (Férias)', lunch: '-', afternoon: 'Ausente (Férias)' });
+  });
+});

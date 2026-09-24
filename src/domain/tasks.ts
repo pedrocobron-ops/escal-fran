@@ -30,8 +30,10 @@ export interface TaskResolution {
   /** Rodízio: titular da vez, mesmo se ausente. */
   titularId?: Id;
   titularAbsent?: boolean;
-  /** Rodízio: titular ausente e sem substituta. */
+  /** Rodízio: titular ausente e sem substituta (ou substituta também ausente). */
   noSubstitute?: boolean;
+  /** Rodízio: titular está inativa mas continua na ordem. */
+  titularInactive?: boolean;
   /** Explicação curta em português. */
   reason: string;
 }
@@ -57,14 +59,22 @@ function uniquePersons(list: Person[]): Person[] {
 }
 
 /** Quem cobre a titular de um rodízio numa data (ausência com substituta). */
-function rotationHolder(data: AppData, titularId: Id, date: IsoDate): Pick<TaskResolution, 'holders' | 'titularAbsent' | 'noSubstitute'> {
-  const active = data.asbs.find((a) => a.id === titularId)?.active ?? false;
+function rotationHolder(
+  data: AppData,
+  titularId: Id,
+  date: IsoDate,
+): Pick<TaskResolution, 'holders' | 'titularAbsent' | 'noSubstitute' | 'titularInactive'> & { substituteUnavailable?: string } {
+  const titular = data.asbs.find((a) => a.id === titularId);
+  if (!titular || !titular.active) return { holders: [], titularAbsent: false, noSubstitute: false, titularInactive: true };
   const absence = absenceFor(data, titularId, date);
-  if (active && !absence) return { holders: [{ type: 'asb', asbId: titularId }], titularAbsent: false, noSubstitute: false };
-  if (absence && isTeamSubstitute(absence)) {
-    return { holders: [{ type: 'asb', asbId: absence.substitute.asbId }], titularAbsent: true, noSubstitute: false };
+  if (!absence) return { holders: [{ type: 'asb', asbId: titularId }], titularAbsent: false, noSubstitute: false };
+  if (isTeamSubstitute(absence)) {
+    const sub = data.asbs.find((a) => a.id === absence.substitute.asbId);
+    if (!sub || !sub.active) return { holders: [], titularAbsent: true, noSubstitute: true, substituteUnavailable: `${sub?.name ?? 'a substituta'} está inativa` };
+    if (absenceFor(data, sub.id, date)) return { holders: [], titularAbsent: true, noSubstitute: true, substituteUnavailable: `${sub.name} também está ausente` };
+    return { holders: [{ type: 'asb', asbId: sub.id }], titularAbsent: true, noSubstitute: false };
   }
-  if (absence && isExternalSubstitute(absence)) {
+  if (isExternalSubstitute(absence)) {
     return { holders: [{ type: 'external', name: absence.substitute.externalName }], titularAbsent: true, noSubstitute: false };
   }
   return { holders: [], titularAbsent: true, noSubstitute: true };
@@ -114,11 +124,14 @@ export function resolveTask(data: AppData, task: Task, date: IsoDate, day?: Effe
     case 'rotation': {
       const titularId = rotationTitular(a, date);
       if (!titularId) return { ...base, reason: 'Rodízio sem ordem definida.' };
-      const r = rotationHolder(data, titularId, date);
+      const { substituteUnavailable, ...r } = rotationHolder(data, titularId, date);
       const label = a.period === 'week' ? 'da semana' : 'do mês';
       let reason = `${asbName(data, titularId)} é a titular ${label}.`;
-      if (r.titularAbsent) {
-        reason += r.noSubstitute ? ' Está ausente, sem substituta.' : ` Está ausente, cobre ${r.holders.map((p) => personName(data, p)).join(' e ')}.`;
+      if (r.titularInactive) reason += ' Está inativa: ajuste a ordem do rodízio.';
+      else if (r.titularAbsent) {
+        reason += r.noSubstitute
+          ? ` Está ausente, sem substituta${substituteUnavailable ? ` (${substituteUnavailable})` : ''}.`
+          : ` Está ausente, cobre ${r.holders.map((p) => personName(data, p)).join(' e ')}.`;
       }
       return { ...base, ...r, titularId, reason };
     }

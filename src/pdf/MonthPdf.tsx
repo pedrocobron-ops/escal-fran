@@ -52,7 +52,8 @@ export function MonthPdf({ m }: { m: MonthPdfModel }) {
           ))}
         </View>
 
-        <Text style={s.h2} break>2. Ocupação das salas por horário</Text>
+        <View wrap={false}>
+        <Text style={s.h2}>2. Ocupação das salas por horário</Text>
         <View style={s.table}>
           <View style={[s.row, s.head]}>
             <Text style={[s.cell, { flexBasis: 60, flexGrow: 0 }]}>Horário</Text>
@@ -70,8 +71,9 @@ export function MonthPdf({ m }: { m: MonthPdfModel }) {
             </View>
           ))}
         </View>
+        </View>
 
-        <Text style={s.h2} break>3. Rodízio de tarefas especiais</Text>
+        <Text style={s.h2} minPresenceAhead={60}>3. Rodízio de tarefas especiais</Text>
         {m.weeklyRows.length === 0 ? (
           <Text style={s.muted}>Nenhum rodízio semanal cadastrado.</Text>
         ) : (

@@ -27,3 +27,8 @@ export function isExternalSubstitute(a: Absence): a is Absence & { substitute: {
 export function isTeamSubstitute(a: Absence): a is Absence & { substitute: { asbId: Id } } {
   return a.substitute !== undefined && 'asbId' in a.substitute;
 }
+
+/** Ausências da mesma ASB que se sobrepõem ao período, ignorando a própria (ao editar). */
+export function overlappingAbsences(data: Pick<AppData, 'absences'>, asbId: Id, from: IsoDate, to: IsoDate, exceptId?: Id): Absence[] {
+  return data.absences.filter((a) => a.id !== exceptId && a.asbId === asbId && a.from <= to && a.to >= from);
+}

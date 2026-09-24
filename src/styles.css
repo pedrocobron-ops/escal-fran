@@ -49,6 +49,10 @@ a { color: var(--accent); }
 .save-indicator.error { color: var(--danger); }
 .app-main { padding: 16px; max-width: 1600px; margin: 0 auto; }
 
+/* ---- Lembrete de backup ---- */
+.backup-bar { background: var(--warn-soft); border-bottom: 1px solid #f1d9a8; padding: 6px 16px; font-size: 13px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.backup-bar .spacer { flex: 1; }
+
 /* ---- Botões e campos ---- */
 .btn {
   display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 6px;
@@ -127,6 +131,9 @@ a { color: var(--accent); }
 .cell.valid { background: var(--ok-soft); outline: 1px dashed var(--ok); outline-offset: -2px; }
 .cell.invalid { background: #ececec; opacity: 0.55; }
 .cell.over.valid { background: #c8e6cb; }
+.cell.valid.no-dentist { background: var(--warn-soft); outline-color: var(--warn); }
+.cell.over.valid.no-dentist { background: #ffe4b8; }
+.cell.valid.no-dentist .dentist.empty::after { content: ' (aceita, com aviso)'; color: var(--warn); font-style: normal; }
 .cell.alert-critico { box-shadow: inset 0 0 0 2px var(--danger); background: var(--danger-soft); }
 .cell.alert-aviso { box-shadow: inset 0 0 0 2px var(--warn); }
 .cell.readonly { min-height: 44px; }

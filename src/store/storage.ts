@@ -2,6 +2,7 @@
 // só o adapter, sem mexer no resto do app.
 
 import type { AppData } from '../domain';
+import { todayIso } from '../domain';
 import seedJson from '../data/seed.json';
 
 export const STORAGE_KEY = 'escala-ceo:data';
@@ -66,10 +67,7 @@ export function exportBackup(data: AppData): string {
 }
 
 export function backupFileName(now: Date = new Date()): string {
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
-  return `escala-ceo-backup-${y}-${m}-${d}.json`;
+  return `escala-ceo-backup-${todayIso(now)}.json`;
 }
 
 export class BackupError extends Error {}
@@ -82,7 +80,26 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
-/** Valida um JSON de backup. Lança BackupError com mensagem em português. */
+const SLOT_KINDS = ['sala', 'apoio', 'recepcao', 'cme', 'almox', 'almoco'];
+const TASK_MODES = ['dentist', 'room', 'rotation', 'fixed'];
+
+function need(cond: unknown, msg: string): void {
+  if (!cond) throw new BackupError(msg);
+}
+
+function isStr(v: unknown): v is string {
+  return typeof v === 'string' && v.length > 0;
+}
+
+function isNum(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v);
+}
+
+function isIso(v: unknown): boolean {
+  return typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+}
+
+/** Valida um JSON de backup, registro a registro. Lança BackupError com mensagem em português. */
 export function parseBackup(json: string): AppData {
   let raw: unknown;
   try {
@@ -100,6 +117,31 @@ export function parseBackup(json: string): AppData {
   }
   const base = raw.base;
   if (!isRecord(base) || !isArray(base.slots)) throw new BackupError('O campo "base.slots" precisa ser uma lista.');
+
+  (raw.rooms as unknown[]).forEach((r, i) => {
+    need(isRecord(r) && isStr(r.id) && isStr(r.name), `Sala ${i + 1} sem id ou nome.`);
+  });
+  const roomIds = new Set((raw.rooms as Array<{ id: string }>).map((r) => r.id));
+  (raw.dentists as unknown[]).forEach((d, i) => {
+    need(isRecord(d) && isStr(d.id) && isStr(d.name) && isStr(d.roomId) && isNum(d.start) && isNum(d.end), `Dentista ${i + 1} incompleto (id, nome, sala, início e fim).`);
+    need(roomIds.has((d as { roomId: string }).roomId), `Dentista "${(d as { name: string }).name}" aponta para uma sala que não existe.`);
+  });
+  (raw.asbs as unknown[]).forEach((a, i) => {
+    need(isRecord(a) && isStr(a.id) && isStr(a.name) && isNum(a.start) && isNum(a.end), `ASB ${i + 1} incompleta (id, nome, entrada e saída).`);
+  });
+  const asbIds = new Set((raw.asbs as Array<{ id: string }>).map((a) => a.id));
+  (base.slots as unknown[]).forEach((s, i) => {
+    need(isRecord(s) && isStr(s.asbId) && isNum(s.hour) && isStr(s.kind) && SLOT_KINDS.includes(s.kind), `Ficha ${i + 1} da escala incompleta.`);
+    need(asbIds.has((s as { asbId: string }).asbId), `Ficha ${i + 1} aponta para uma ASB que não existe.`);
+  });
+  (raw.tasks as unknown[]).forEach((t, i) => {
+    need(isRecord(t) && isStr(t.id) && isStr(t.name) && isArray(t.days) && isRecord(t.assignment) && isStr(t.assignment.mode) && TASK_MODES.includes(t.assignment.mode), `Tarefa ${i + 1} incompleta.`);
+  });
+  (raw.absences as unknown[]).forEach((a, i) => {
+    need(isRecord(a) && isStr(a.id) && isStr(a.asbId) && isIso(a.from) && isIso(a.to) && isStr(a.reason), `Ausência ${i + 1} incompleta.`);
+  });
+  (raw.rules as unknown[]).forEach((r, i) => need(typeof r === 'string', `Regra ${i + 1} precisa ser texto.`));
+
   const data = raw as unknown as AppData;
   return migrate(data);
 }

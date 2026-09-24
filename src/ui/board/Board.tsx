@@ -304,16 +304,17 @@ function Cell({ column, hour, day, slots, alertLevel, activeAsb, colors, asbById
     disabled: readOnly || valid === false,
   });
   const dentists = column.roomId ? dentistsAt(day.dentists, column.roomId, hour) : [];
+  const noDentist = column.kind === 'sala' && dentists.length === 0;
   const cls = [
     'cell',
     readOnly ? 'readonly' : '',
-    valid === true ? 'valid' : valid === false ? 'invalid' : '',
+    valid === true ? (noDentist ? 'valid no-dentist' : 'valid') : valid === false ? 'invalid' : '',
     isOver && valid ? 'over' : '',
     alertLevel ? `alert-${alertLevel}` : '',
   ].join(' ');
   const bg = column.color && !alertLevel && valid === undefined ? tint(column.color, 0.93) : undefined;
   return (
-    <div ref={setNodeRef} className={cls} style={{ background: bg }}>
+    <div ref={setNodeRef} className={cls} style={{ background: bg }} title={valid && noDentist ? 'Sala sem dentista neste bloco: aceita, mas gera aviso' : undefined}>
       {column.kind === 'sala' &&
         (dentists.length > 0 ? (
           <div className="dentist">{dentists.map((d) => `${d.name} (${d.specialty})`).join(', ')}</div>
