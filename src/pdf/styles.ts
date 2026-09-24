@@ -1,4 +1,7 @@
-import { StyleSheet } from '@react-pdf/renderer';
+import { Font, StyleSheet } from '@react-pdf/renderer';
+
+// Sem hifenização: palavras quebram só entre si, nunca no meio ("Estoma-tologia").
+Font.registerHyphenationCallback((word) => [word]);
 
 // Preto e branco legível em impressão; cor só como apoio leve.
 export const pdfStyles = StyleSheet.create({
