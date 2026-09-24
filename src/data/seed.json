@@ -1,0 +1,752 @@
+{
+  "version": 1,
+  "rooms": [
+    {
+      "id": "s1",
+      "name": "Sala 1",
+      "color": "#2F5F94",
+      "order": 1
+    },
+    {
+      "id": "s2",
+      "name": "Sala 2",
+      "color": "#6E4E95",
+      "order": 2
+    },
+    {
+      "id": "s3",
+      "name": "Sala 3",
+      "color": "#B86A22",
+      "order": 3
+    },
+    {
+      "id": "s4",
+      "name": "Sala 4",
+      "color": "#2C7F5C",
+      "order": 4
+    }
+  ],
+  "dentists": [
+    {
+      "id": "id001",
+      "name": "Dr. Francisco",
+      "specialty": "Estomatologia",
+      "roomId": "s1",
+      "start": 8,
+      "end": 11,
+      "days": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    },
+    {
+      "id": "id002",
+      "name": "Dra. Victoria",
+      "specialty": "COM",
+      "roomId": "s3",
+      "start": 7,
+      "end": 11,
+      "days": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    },
+    {
+      "id": "id003",
+      "name": "Dra. Juliana",
+      "specialty": "Endodontia",
+      "roomId": "s4",
+      "start": 7,
+      "end": 11,
+      "days": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    },
+    {
+      "id": "id004",
+      "name": "Dra. Ana",
+      "specialty": "Ortodontia",
+      "roomId": "s2",
+      "start": 11,
+      "end": 15,
+      "days": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    },
+    {
+      "id": "id005",
+      "name": "Dra. Priscila",
+      "specialty": "Prótese",
+      "roomId": "s1",
+      "start": 11,
+      "end": 15,
+      "days": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    },
+    {
+      "id": "id006",
+      "name": "Dr. Marco",
+      "specialty": "Endodontia",
+      "roomId": "s4",
+      "start": 11,
+      "end": 15,
+      "days": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    },
+    {
+      "id": "id007",
+      "name": "Dra. Mariana",
+      "specialty": "PNE",
+      "roomId": "s4",
+      "start": 15,
+      "end": 19,
+      "days": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    },
+    {
+      "id": "id008",
+      "name": "Dra. Aline",
+      "specialty": "COM",
+      "roomId": "s3",
+      "start": 15,
+      "end": 19,
+      "days": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    },
+    {
+      "id": "id009",
+      "name": "Dr. Edson",
+      "specialty": "Periodontia",
+      "roomId": "s2",
+      "start": 15,
+      "end": 19,
+      "days": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    },
+    {
+      "id": "id010",
+      "name": "Dr. Isac",
+      "specialty": "Prótese",
+      "roomId": "s1",
+      "start": 15,
+      "end": 19,
+      "days": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    }
+  ],
+  "asbs": [
+    {
+      "id": "id011",
+      "name": "Andrea",
+      "start": 7,
+      "end": 13,
+      "lunch": false,
+      "active": true
+    },
+    {
+      "id": "id012",
+      "name": "Laura",
+      "start": 7,
+      "end": 16,
+      "lunch": true,
+      "active": true
+    },
+    {
+      "id": "id013",
+      "name": "Pâmela",
+      "start": 7,
+      "end": 16,
+      "lunch": true,
+      "active": true
+    },
+    {
+      "id": "id014",
+      "name": "Amanda",
+      "start": 9,
+      "end": 18,
+      "lunch": true,
+      "active": true
+    },
+    {
+      "id": "id015",
+      "name": "Priscila",
+      "start": 10,
+      "end": 19,
+      "lunch": true,
+      "active": true
+    },
+    {
+      "id": "id016",
+      "name": "Ana",
+      "start": 10,
+      "end": 19,
+      "lunch": true,
+      "active": true
+    },
+    {
+      "id": "id017",
+      "name": "Nicélia",
+      "start": 13,
+      "end": 19,
+      "lunch": false,
+      "active": true
+    }
+  ],
+  "base": {
+    "slots": [
+      {
+        "asbId": "id011",
+        "hour": 7,
+        "kind": "sala",
+        "roomId": "s3"
+      },
+      {
+        "asbId": "id011",
+        "hour": 8,
+        "kind": "sala",
+        "roomId": "s3"
+      },
+      {
+        "asbId": "id011",
+        "hour": 9,
+        "kind": "sala",
+        "roomId": "s3"
+      },
+      {
+        "asbId": "id011",
+        "hour": 10,
+        "kind": "sala",
+        "roomId": "s3"
+      },
+      {
+        "asbId": "id011",
+        "hour": 11,
+        "kind": "apoio"
+      },
+      {
+        "asbId": "id011",
+        "hour": 12,
+        "kind": "sala",
+        "roomId": "s1"
+      },
+      {
+        "asbId": "id012",
+        "hour": 7,
+        "kind": "cme"
+      },
+      {
+        "asbId": "id012",
+        "hour": 8,
+        "kind": "sala",
+        "roomId": "s1"
+      },
+      {
+        "asbId": "id012",
+        "hour": 9,
+        "kind": "sala",
+        "roomId": "s1"
+      },
+      {
+        "asbId": "id012",
+        "hour": 10,
+        "kind": "sala",
+        "roomId": "s1"
+      },
+      {
+        "asbId": "id012",
+        "hour": 11,
+        "kind": "sala",
+        "roomId": "s1"
+      },
+      {
+        "asbId": "id012",
+        "hour": 12,
+        "kind": "almoco"
+      },
+      {
+        "asbId": "id012",
+        "hour": 13,
+        "kind": "sala",
+        "roomId": "s1"
+      },
+      {
+        "asbId": "id012",
+        "hour": 14,
+        "kind": "sala",
+        "roomId": "s1"
+      },
+      {
+        "asbId": "id012",
+        "hour": 15,
+        "kind": "apoio"
+      },
+      {
+        "asbId": "id013",
+        "hour": 7,
+        "kind": "sala",
+        "roomId": "s4"
+      },
+      {
+        "asbId": "id013",
+        "hour": 8,
+        "kind": "sala",
+        "roomId": "s4"
+      },
+      {
+        "asbId": "id013",
+        "hour": 9,
+        "kind": "sala",
+        "roomId": "s4"
+      },
+      {
+        "asbId": "id013",
+        "hour": 10,
+        "kind": "sala",
+        "roomId": "s4"
+      },
+      {
+        "asbId": "id013",
+        "hour": 11,
+        "kind": "almoco"
+      },
+      {
+        "asbId": "id013",
+        "hour": 12,
+        "kind": "sala",
+        "roomId": "s4"
+      },
+      {
+        "asbId": "id013",
+        "hour": 13,
+        "kind": "sala",
+        "roomId": "s4"
+      },
+      {
+        "asbId": "id013",
+        "hour": 14,
+        "kind": "sala",
+        "roomId": "s4"
+      },
+      {
+        "asbId": "id013",
+        "hour": 15,
+        "kind": "apoio"
+      },
+      {
+        "asbId": "id014",
+        "hour": 9,
+        "kind": "almox"
+      },
+      {
+        "asbId": "id014",
+        "hour": 10,
+        "kind": "almox"
+      },
+      {
+        "asbId": "id014",
+        "hour": 11,
+        "kind": "apoio"
+      },
+      {
+        "asbId": "id014",
+        "hour": 12,
+        "kind": "almoco"
+      },
+      {
+        "asbId": "id014",
+        "hour": 13,
+        "kind": "apoio"
+      },
+      {
+        "asbId": "id014",
+        "hour": 14,
+        "kind": "apoio"
+      },
+      {
+        "asbId": "id014",
+        "hour": 15,
+        "kind": "sala",
+        "roomId": "s2"
+      },
+      {
+        "asbId": "id014",
+        "hour": 16,
+        "kind": "sala",
+        "roomId": "s2"
+      },
+      {
+        "asbId": "id014",
+        "hour": 17,
+        "kind": "sala",
+        "roomId": "s2"
+      },
+      {
+        "asbId": "id015",
+        "hour": 10,
+        "kind": "apoio"
+      },
+      {
+        "asbId": "id015",
+        "hour": 11,
+        "kind": "sala",
+        "roomId": "s2"
+      },
+      {
+        "asbId": "id015",
+        "hour": 12,
+        "kind": "sala",
+        "roomId": "s2"
+      },
+      {
+        "asbId": "id015",
+        "hour": 13,
+        "kind": "sala",
+        "roomId": "s2"
+      },
+      {
+        "asbId": "id015",
+        "hour": 14,
+        "kind": "almoco"
+      },
+      {
+        "asbId": "id015",
+        "hour": 15,
+        "kind": "sala",
+        "roomId": "s3"
+      },
+      {
+        "asbId": "id015",
+        "hour": 16,
+        "kind": "sala",
+        "roomId": "s3"
+      },
+      {
+        "asbId": "id015",
+        "hour": 17,
+        "kind": "sala",
+        "roomId": "s3"
+      },
+      {
+        "asbId": "id015",
+        "hour": 18,
+        "kind": "sala",
+        "roomId": "s3"
+      },
+      {
+        "asbId": "id016",
+        "hour": 10,
+        "kind": "apoio"
+      },
+      {
+        "asbId": "id016",
+        "hour": 11,
+        "kind": "sala",
+        "roomId": "s4"
+      },
+      {
+        "asbId": "id016",
+        "hour": 12,
+        "kind": "apoio"
+      },
+      {
+        "asbId": "id016",
+        "hour": 13,
+        "kind": "almoco"
+      },
+      {
+        "asbId": "id016",
+        "hour": 14,
+        "kind": "sala",
+        "roomId": "s2"
+      },
+      {
+        "asbId": "id016",
+        "hour": 15,
+        "kind": "sala",
+        "roomId": "s4"
+      },
+      {
+        "asbId": "id016",
+        "hour": 16,
+        "kind": "sala",
+        "roomId": "s4"
+      },
+      {
+        "asbId": "id016",
+        "hour": 17,
+        "kind": "sala",
+        "roomId": "s4"
+      },
+      {
+        "asbId": "id016",
+        "hour": 18,
+        "kind": "sala",
+        "roomId": "s4"
+      },
+      {
+        "asbId": "id017",
+        "hour": 13,
+        "kind": "apoio"
+      },
+      {
+        "asbId": "id017",
+        "hour": 14,
+        "kind": "apoio"
+      },
+      {
+        "asbId": "id017",
+        "hour": 15,
+        "kind": "sala",
+        "roomId": "s1"
+      },
+      {
+        "asbId": "id017",
+        "hour": 16,
+        "kind": "sala",
+        "roomId": "s1"
+      },
+      {
+        "asbId": "id017",
+        "hour": 17,
+        "kind": "sala",
+        "roomId": "s1"
+      },
+      {
+        "asbId": "id017",
+        "hour": 18,
+        "kind": "sala",
+        "roomId": "s1"
+      }
+    ]
+  },
+  "tasks": [
+    {
+      "id": "id018",
+      "name": "CME / Arsenal (manhã)",
+      "when": "Diário, 07h às 08h",
+      "rule": "Sempre quem estiver na escala junto com a Estomatologia (Dr. Francisco).",
+      "days": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "assignment": {
+        "mode": "dentist",
+        "dentistId": "id001"
+      }
+    },
+    {
+      "id": "id019",
+      "name": "CME / Arsenal (tarde)",
+      "when": "Diário, 15h às 16h",
+      "rule": "Sempre quem estiver na escala com o Dr. Edson (Perio).",
+      "days": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "assignment": {
+        "mode": "dentist",
+        "dentistId": "id009"
+      }
+    },
+    {
+      "id": "id020",
+      "name": "Troca de líquidos de RX (manhã)",
+      "when": "Diário, manhã",
+      "rule": "ASB escalada na Sala 4 no período da manhã.",
+      "days": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "assignment": {
+        "mode": "room",
+        "roomId": "s4",
+        "hour": 8
+      }
+    },
+    {
+      "id": "id021",
+      "name": "Troca de líquidos de RX (tarde)",
+      "when": "Diário, tarde",
+      "rule": "ASB escalada na Sala 4 no período da tarde.",
+      "days": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "assignment": {
+        "mode": "room",
+        "roomId": "s4",
+        "hour": 16
+      }
+    },
+    {
+      "id": "id022",
+      "name": "Conferência de prótese (11h–15h)",
+      "when": "Diário, 11h às 15h",
+      "rule": "Conferência de prótese e anotações no caderno e planilha: quem estiver com a especialidade de Prótese. A ASB da prótese fica 1 mês sem rotacionar nas outras salas.",
+      "days": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "assignment": {
+        "mode": "dentist",
+        "dentistId": "id005"
+      }
+    },
+    {
+      "id": "id023",
+      "name": "Conferência de prótese (15h–19h)",
+      "when": "Diário, 15h às 19h",
+      "rule": "Conferência de prótese e anotações no caderno e planilha: quem estiver com a especialidade de Prótese. A ASB da prótese fica 1 mês sem rotacionar nas outras salas.",
+      "days": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "assignment": {
+        "mode": "dentist",
+        "dentistId": "id010"
+      }
+    },
+    {
+      "id": "id024",
+      "name": "Drenar compressor",
+      "when": "Quarta e sexta, 18h50",
+      "rule": "ASB do período da tarde. Demora 5 minutos.",
+      "days": [
+        3,
+        5
+      ],
+      "assignment": {
+        "mode": "fixed",
+        "asbIds": [
+          "id016",
+          "id015"
+        ]
+      }
+    },
+    {
+      "id": "id025",
+      "name": "Planilhas de Semio (Estomatologia)",
+      "when": "Mensal",
+      "rule": "A auxiliar faz 1 mês e rotaciona todo mês.",
+      "days": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "assignment": {
+        "mode": "rotation",
+        "period": "month",
+        "order": [
+          "id012",
+          "id013",
+          "id011",
+          "id014",
+          "id015",
+          "id016",
+          "id017"
+        ],
+        "startDate": "2026-09-01"
+      }
+    },
+    {
+      "id": "id026",
+      "name": "Pedido de almoxarifado e organização do armário",
+      "when": "Segunda ou terça, 09h às 14h",
+      "rule": "1x na semana, com rotação semanal entre a equipe.",
+      "days": [
+        1,
+        2
+      ],
+      "assignment": {
+        "mode": "rotation",
+        "period": "week",
+        "order": [
+          "id014",
+          "id012",
+          "id013",
+          "id015"
+        ],
+        "startDate": "2026-09-07"
+      }
+    }
+  ],
+  "rules": [
+    "Verificar validade de instrumental: ASB responsável pela sala.",
+    "Reposição de insumos: ASB responsável pela sala.",
+    "Reposição de anestésicos: dentista da sala.",
+    "Andrea e Nicélia não saem para almoço. As demais precisam de 1 hora de almoço.",
+    "Quem ficar de auxiliar na Prótese precisa ficar 1 mês sem rotacionar nas outras salas."
+  ],
+  "absences": [],
+  "openDays": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ]
+}
