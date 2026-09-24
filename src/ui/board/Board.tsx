@@ -3,7 +3,7 @@ import {
   DndContext,
   DragOverlay,
   KeyboardSensor,
-  PointerSensor,
+  MouseSensor,
   TouchSensor,
   pointerWithin,
   rectIntersection,
@@ -16,7 +16,7 @@ import {
 } from '@dnd-kit/core';
 import type { Alert, Asb, EffectiveDay, EffectiveSlot, IsoDate } from '../../domain';
 import {
-  HOURS, WEEKDAY_LABEL, analyze, baseDay, canAssign, dentistsAt, effectiveDay, formatBlock, formatDate, formatRange,
+  HOURS, WEEKDAY_LABEL, analyze, baseDay, canAssign, dentistsAt, effectiveDay, formatBlock, formatDate, formatHour, formatRange,
   isExternalSubstitute, isTeamSubstitute, proteseAlerts, todayIso, validHours, weekdayOf,
 } from '../../domain';
 import { removeSlot, setSlots, useData, useStore, clearSchedule } from '../../store/useStore';
@@ -107,8 +107,10 @@ export function Board() {
   const activeAsb: Asb | undefined = active ? asbById.get(active.asbId) : undefined;
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 6 } }),
+    // Mouse e toque separados: no toque, segurar 200 ms começa o arrasto e
+    // deslizar antes disso rola a tela normalmente.
+    useSensor(MouseSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
     useSensor(KeyboardSensor),
   );
 
@@ -188,7 +190,7 @@ export function Board() {
             <button className={`btn${rangeMode ? ' active' : ''}`} onClick={() => setRangeMode((v) => !v)} title="Ao soltar a ficha, pergunta até que horas preencher">
               Preencher em faixa
             </button>
-            <span className="muted small">ou segure Shift ao soltar</span>
+            <span className="muted small hint-shift">ou segure Shift ao soltar</span>
             <span className="spacer" />
             <UndoRedo />
             <button className="btn danger" onClick={onClear} disabled={data.base.slots.length === 0}>Limpar escala</button>
@@ -201,7 +203,7 @@ export function Board() {
       <DndContext sensors={sensors} collisionDetection={collision} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setActive(null)}>
         <div className="board-layout">
           <div className="board-scroll">
-            <div className="board" style={{ gridTemplateColumns: `64px repeat(${columns.length}, minmax(120px, 1fr))` }}>
+            <div className="board" style={{ gridTemplateColumns: `var(--hour-w) repeat(${columns.length}, minmax(var(--cell-min), 1fr))` }}>
               <div className="hcell">Hora</div>
               {columns.map((c) => (
                 <div key={c.key} className="hcell" style={c.color ? { background: tint(c.color, 0.8) } : undefined}>
@@ -263,7 +265,10 @@ interface RowProps {
 function RowCells({ hour, columns, day, slotsByCell, cellAlerts, activeAsb, colors, asbById, readOnly, onRemove }: RowProps) {
   return (
     <>
-      <div className="hour">{formatBlock(hour)}</div>
+      <div className="hour" title={formatBlock(hour)}>
+        <span className="hour-full">{formatBlock(hour)}</span>
+        <span className="hour-short">{formatHour(hour)}</span>
+      </div>
       {columns.map((c) => (
         <Cell
           key={c.key}
@@ -368,7 +373,7 @@ function Palette({ day, asbs, colors, readOnly, active, alerts }: PaletteProps) 
       <div className="card">
         <h3>ASBs</h3>
         <p className="muted small">
-          {readOnly ? 'Modo Dia é somente leitura.' : active?.type === 'slot' ? 'Solte aqui para remover.' : 'Arraste uma ficha para o quadro.'}
+          {readOnly ? 'Modo Dia é somente leitura.' : active?.type === 'slot' ? 'Solte aqui para remover.' : 'Arraste uma ficha para o quadro. No celular, segure a ficha antes de arrastar.'}
         </p>
         <div className="palette-list">
           {sorted.map((asb) => {
