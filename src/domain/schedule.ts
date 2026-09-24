@@ -13,7 +13,7 @@ import type {
   Slot,
   UncoveredSlot,
 } from './types';
-import { HOURS } from './types';
+import { HOURS, SLOT_KIND_LABEL } from './types';
 import { weekdayOf, monthsSince } from './dates';
 import { absencesOn, isExternalSubstitute, isTeamSubstitute } from './absences';
 import { formatHour, formatRange, hoursBetween } from './time';
@@ -258,7 +258,7 @@ export function analyze(data: AppData, day: EffectiveDay): Alert[] {
   // Ausências: sem substituta ou substituta com choque.
   for (const u of day.uncovered) {
     const absent = asbById.get(u.slot.asbId)?.name ?? u.slot.asbId;
-    const where = u.slot.kind === 'sala' && u.slot.roomId ? roomName(u.slot.roomId) : u.slot.kind.toUpperCase();
+    const where = u.slot.kind === 'sala' && u.slot.roomId ? roomName(u.slot.roomId) : SLOT_KIND_LABEL[u.slot.kind];
     if (u.reason === 'sem-substituta') {
       alerts.push({
         level: 'aviso',
@@ -280,7 +280,9 @@ export function analyze(data: AppData, day: EffectiveDay): Alert[] {
             ? 'está no almoço'
             : u.busyWith === 'sala'
               ? 'já está em outra sala'
-              : `já está em ${u.busyWith ?? 'outra atividade'}`;
+              : u.busyWith
+                ? `já está no ${SLOT_KIND_LABEL[u.busyWith]}`
+                : 'já está em outra atividade';
     alerts.push({
       level: 'aviso',
       code: 'substituta-choque',

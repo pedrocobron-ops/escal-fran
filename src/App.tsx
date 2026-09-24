@@ -5,19 +5,20 @@ import { useStore } from './store/useStore';
 import { ConfirmProvider } from './ui/common/Modal';
 import { ROUTES, href, useHashRoute, type Route } from './ui/router';
 import { Board } from './ui/board/Board';
+import { TasksScreen } from './ui/tasks/TasksScreen';
+import { AbsencesScreen } from './ui/absences/AbsencesScreen';
+import { TeamScreen } from './ui/team/TeamScreen';
+import { MonthScreen } from './ui/month/MonthScreen';
+import { SettingsScreen } from './ui/settings/SettingsScreen';
 
 const SCREENS: Record<Route, () => ReactNode> = {
   quadro: () => <Board />,
-  tarefas: () => <Placeholder name="Tarefas e rodízios" />,
-  ausencias: () => <Placeholder name="Ausências" />,
-  equipe: () => <Placeholder name="Equipe e salas" />,
-  mes: () => <Placeholder name="Visão do mês" />,
-  ajustes: () => <Placeholder name="Ajustes" />,
+  tarefas: () => <TasksScreen />,
+  ausencias: () => <AbsencesScreen />,
+  equipe: () => <TeamScreen />,
+  mes: () => <MonthScreen />,
+  ajustes: () => <SettingsScreen />,
 };
-
-function Placeholder({ name }: { name: string }) {
-  return <p className="muted">{name}: em construção.</p>;
-}
 
 export function App() {
   const loaded = useStore((s) => s.loaded);
