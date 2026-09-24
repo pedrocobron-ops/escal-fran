@@ -1,17 +1,34 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { IsoDate } from '../domain';
 import { MONTH_LABEL, todayIso } from '../domain';
 import { useData } from '../store/useStore';
 import type { YearMonth } from '../ui/common/MonthPicker';
 import { Modal, Notice } from '../ui/common/Modal';
 
-function download(blob: Blob, name: string) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = name;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
+interface Ready {
+  url: string;
+  name: string;
+  size: number;
+}
+
+/** Tenta baixar automaticamente. Alguns navegadores bloqueiam; o modal com o link cobre esses casos. */
+function tryAutoDownload(url: string, name: string): boolean {
+  try {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function formatSize(bytes: number): string {
+  return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
 /** Botões "Gerar PDF" do mês e do dia. */
@@ -21,15 +38,32 @@ export function PdfButtons({ ym }: { ym: YearMonth }) {
   const [askDay, setAskDay] = useState(false);
   const [date, setDate] = useState<IsoDate>(todayIso());
   const [error, setError] = useState<string | null>(null);
+  const [ready, setReady] = useState<Ready | null>(null);
+
+  useEffect(() => {
+    if (!ready) return;
+    return () => URL.revokeObjectURL(ready.url);
+  }, [ready]);
+
+  const finish = (blob: Blob, name: string) => {
+    const url = URL.createObjectURL(blob);
+    tryAutoDownload(url, name);
+    setReady({ url, name, size: blob.size });
+  };
+
+  const fail = (e: unknown) => {
+    const msg = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+    setError(msg);
+  };
 
   const genMonth = async () => {
     setBusy('month');
     try {
       const { monthPdfBlob } = await import('./generate');
       const blob = await monthPdfBlob(data, ym.year, ym.month);
-      download(blob, `escala-ceo-${ym.year}-${String(ym.month).padStart(2, '0')}-${MONTH_LABEL[ym.month - 1]}.pdf`);
+      finish(blob, `escala-ceo-${ym.year}-${String(ym.month).padStart(2, '0')}-${MONTH_LABEL[ym.month - 1]}.pdf`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Erro ao gerar o PDF.');
+      fail(e);
     } finally {
       setBusy(null);
     }
@@ -41,9 +75,9 @@ export function PdfButtons({ ym }: { ym: YearMonth }) {
     try {
       const { dayPdfBlob } = await import('./generate');
       const blob = await dayPdfBlob(data, date);
-      download(blob, `escala-ceo-dia-${date}.pdf`);
+      finish(blob, `escala-ceo-dia-${date}.pdf`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Erro ao gerar o PDF.');
+      fail(e);
     } finally {
       setBusy(null);
     }
@@ -70,7 +104,20 @@ export function PdfButtons({ ym }: { ym: YearMonth }) {
           </div>
         </Modal>
       )}
-      {error && <Notice title="Não foi possível gerar o PDF" message={error} onClose={() => setError(null)} />}
+      {ready && (
+        <Modal title="PDF pronto" onClose={() => setReady(null)}>
+          <p>
+            <strong>{ready.name}</strong> ({formatSize(ready.size)}). Se o download não começou sozinho, use o botão abaixo.
+          </p>
+          <div className="modal-actions" style={{ justifyContent: 'flex-start' }}>
+            <a className="btn primary" href={ready.url} download={ready.name}>Baixar PDF</a>
+            <a className="btn" href={ready.url} target="_blank" rel="noopener noreferrer">Abrir em nova aba</a>
+            <span style={{ flex: 1 }} />
+            <button className="btn" onClick={() => setReady(null)}>Fechar</button>
+          </div>
+        </Modal>
+      )}
+      {error && <Notice title="Não foi possível gerar o PDF" message={<span>{error}</span>} onClose={() => setError(null)} />}
     </>
   );
 }
