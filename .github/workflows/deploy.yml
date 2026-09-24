@@ -1,8 +1,9 @@
 name: Deploy no GitHub Pages
 
+# Build e testes rodam em todo push. A publicação só acontece na branch padrão
+# do repositório (hoje claude/modest-gates-io9r9y, depois main) ou manualmente.
 on:
   push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -11,7 +12,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  group: pages-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -29,17 +30,20 @@ jobs:
         env:
           # Base do Vite igual ao nome do repositório (ex.: /escal-fran/).
           VITE_BASE: /${{ github.event.repository.name }}/
-      - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
 
   deploy:
     needs: build
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - id: deployment
         uses: actions/deploy-pages@v4

@@ -22,7 +22,7 @@ npm run build
 
 ## Publicar
 
-O workflow `.github/workflows/deploy.yml` publica no GitHub Pages a cada push na branch `main` (ou manualmente em Actions, "Run workflow"). Em Settings, Pages, escolha a fonte "GitHub Actions". A base do Vite é definida automaticamente com o nome do repositório.
+O workflow `.github/workflows/deploy.yml` roda testes e build em todo push e publica no GitHub Pages quando o push é na branch padrão do repositório (ou manualmente em Actions, "Run workflow"). O primeiro deploy ativa o Pages sozinho; se falhar, em Settings, Pages, escolha a fonte "GitHub Actions". A base do Vite é definida automaticamente com o nome do repositório.
 
 ## Dados
 
