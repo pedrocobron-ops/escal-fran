@@ -22,17 +22,19 @@ describe('folga de dentista', () => {
     // 08h–10h: remanejada para a Sala 1
     for (const h of [8, 9, 10]) expect(andrea(h)).toMatchObject({ kind: 'sala', roomId: 's1', origin: 'auto', movedFrom: 's3' });
     const alerts = analyze(d, day);
-    expect(alerts.filter((a) => a.code === 'sala-sem-asb' && a.roomId === 's1').map((a) => a.hour)).toEqual([11, 13, 14]); // só o que Andrea não alcança
+    // 11h, 13h e 14h: quem está no apoio geral cobre a Laura
+    expect(alerts.filter((a) => a.code === 'sala-sem-asb' && a.roomId === 's1').map((a) => a.hour)).toEqual([]);
     expect(alerts.filter((a) => a.code === 'sala-sem-dentista')).toEqual([]);
     expect(alerts.find((a) => a.code === 'dentista-de-folga')?.message).toContain('Dra. Victoria');
     const rem = alerts.filter((a) => a.code === 'remanejada').map((a) => a.message);
-    expect(rem).toEqual([
+    expect(rem.slice(0, 2)).toEqual([
       'Andrea remanejada da Sala 3 para o CME / Arsenal (07h–08h), cobrindo Laura.',
-      'Andrea remanejada da Sala 3 para a Sala 1 (08h–11h).',
+      'Andrea remanejada da Sala 3 para a Sala 1 (08h–11h), cobrindo Laura.',
     ]);
+    expect(rem.slice(2).every((m) => m.includes('saiu do Apoio / Recepção para a Sala 1'))).toBe(true);
     expect(alerts.filter((a) => a.code === 'remanejada').every((a) => a.level === 'info')).toBe(true);
     // o aviso "ausente sem substituta" some onde a sala foi coberta
-    expect(alerts.filter((a) => a.code === 'ausente-sem-substituta').map((a) => a.hour)).toEqual([11, 13, 14]);
+    expect(alerts.filter((a) => a.code === 'ausente-sem-substituta').map((a) => a.hour)).toEqual([]);
   });
 
   it('sem sala descoberta, a ASB fica onde está e não há aviso', () => {
@@ -48,8 +50,12 @@ describe('folga de dentista', () => {
     const d = seed();
     d.dentistAbsences = [{ id: 'df1', dentistId: 'id001', from: MON, to: MON, reason: 'Folga' }];
     const r = resolveTask(d, d.tasks.find((t) => t.id === 'id018')!, MON);
-    expect(r.holders).toEqual([]);
-    expect(r.reason).toContain('de folga');
+    expect(r.holders).toEqual([{ type: 'asb', asbId: ID.laura }]);
+    expect(r.reason).toBe('Dr. Francisco está de folga; fica com quem normalmente está com ele: Laura.');
+    d.absences.push(absence({ asbId: ID.laura, from: MON, to: MON }));
+    const r2 = resolveTask(d, d.tasks.find((t) => t.id === 'id018')!, MON);
+    expect(r2.holders).toEqual([]);
+    expect(r2.reason).toContain('também não veio');
   });
 });
 
@@ -72,8 +78,9 @@ describe('hora extra', () => {
     expect(nic(12)).toBeUndefined(); // Andrea já cobre a Sala 1 às 12h
     const alerts = analyze(d, day);
     expect(alerts.filter((a) => a.code === 'hora-extra-sem-atribuicao').map((a) => a.hour)).toEqual([12]);
-    expect(alerts.find((a) => a.code === 'remanejada')?.message).toBe('Nicélia (hora extra) colocada na Sala 1 (08h–12h).');
-    expect(alerts.filter((a) => a.code === 'sala-sem-asb' && a.roomId === 's1').map((a) => a.hour)).toEqual([13, 14]);
+    expect(alerts.find((a) => a.code === 'remanejada')?.message).toBe('Nicélia (hora extra) colocada na Sala 1 (08h–12h), cobrindo Laura.');
+    // 13h e 14h: Amanda sai do apoio para cobrir a Laura
+    expect(alerts.filter((a) => a.code === 'sala-sem-asb' && a.roomId === 's1').map((a) => a.hour)).toEqual([]);
   });
 
   it('hora extra de quem está ausente não conta', () => {

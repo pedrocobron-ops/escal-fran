@@ -16,14 +16,35 @@ export function parseIso(iso: IsoDate): Ymd {
   return { year: Number(m[1]), month: Number(m[2]), day: Number(m[3]) };
 }
 
+/** Milissegundos UTC sem o atalho do Date.UTC que trata os anos 0 a 99 como 1900 a 1999. */
+function utcOf(year: number, month: number, day: number): number {
+  const d = new Date(0);
+  d.setUTCFullYear(year, month - 1, day);
+  d.setUTCHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+function isoOfMs(ms: number): IsoDate {
+  const d = new Date(ms);
+  const y = d.getUTCFullYear();
+  return `${String(y).padStart(4, '0')}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+}
+
 export function toIso(year: number, month: number, day: number): IsoDate {
-  const d = new Date(Date.UTC(year, month - 1, day));
-  return d.toISOString().slice(0, 10);
+  return isoOfMs(utcOf(year, month, day));
 }
 
 function utcMs(iso: IsoDate): number {
   const { year, month, day } = parseIso(iso);
-  return Date.UTC(year, month - 1, day);
+  return utcOf(year, month, day);
+}
+
+/** Data ISO completa, que existe no calendário e com ano entre 2000 e 2100 (o que o app aceita salvar). */
+export function isValidIso(iso: unknown): iso is IsoDate {
+  if (typeof iso !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return false;
+  const { year, month, day } = parseIso(iso);
+  if (year < 2000 || year > 2100 || month < 1 || month > 12 || day < 1) return false;
+  return toIso(year, month, day) === iso;
 }
 
 /** 0=dom ... 6=sáb. */
@@ -32,7 +53,7 @@ export function weekdayOf(iso: IsoDate): number {
 }
 
 export function addDays(iso: IsoDate, days: number): IsoDate {
-  return new Date(utcMs(iso) + days * DAY_MS).toISOString().slice(0, 10);
+  return isoOfMs(utcMs(iso) + days * DAY_MS);
 }
 
 /** Diferença em dias (b - a). */
@@ -69,7 +90,7 @@ export function isBetween(iso: IsoDate, from: IsoDate, to: IsoDate): boolean {
 }
 
 export function daysInMonth(year: number, month: number): number {
-  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return new Date(utcOf(year, month + 1, 0)).getUTCDate();
 }
 
 export function firstOfMonth(year: number, month: number): IsoDate {

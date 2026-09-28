@@ -7,8 +7,8 @@ describe('persistência', () => {
   it('no primeiro uso carrega o seed', async () => {
     const { data, fromSeed } = await loadInitial(new MemoryAdapter());
     expect(fromSeed).toBe(true);
-    expect(data.asbs).toHaveLength(7);
-    expect(data.base.slots).toHaveLength(seed().base.slots.length);
+    expect(data!.asbs).toHaveLength(7);
+    expect(data!.base.slots).toHaveLength(seed().base.slots.length);
   });
 
   it('depois de salvar, carrega o que foi salvo', async () => {
@@ -18,13 +18,13 @@ describe('persistência', () => {
     await adapter.save(d);
     const { data, fromSeed } = await loadInitial(adapter);
     expect(fromSeed).toBe(false);
-    expect(data.rules).toContain('Regra nova');
+    expect(data!.rules).toContain('Regra nova');
   });
 
   it('exporta e importa backup sem perder nada', () => {
     const d = seedData();
     const json = exportBackup(d);
-    expect(parseBackup(json)).toEqual({ ...d, protese: [], extraShifts: [], dentistAbsences: [], dayOverrides: [], history: [] });
+    expect(parseBackup(json)).toEqual({ ...d, protese: [], extraShifts: [], dentistAbsences: [], dayOverrides: [], history: [], closedDates: [] });
   });
 
   it('rejeita backup inválido com mensagem em português', () => {
@@ -72,5 +72,42 @@ describe('operações do quadro', () => {
     const rot = d.tasks.find((t) => t.id === 'id025')!.assignment;
     expect(rot.mode === 'rotation' && rot.order.includes(ID.ana)).toBe(false);
     expect(d.absences[0].substitute).toBeUndefined();
+  });
+});
+
+describe('dados salvos com problema nunca são substituídos', () => {
+  it('ausência com ano de 5 dígitos: carrega em modo de recuperação, sem gravar o seed por cima', async () => {
+    const { loadInitial, MemoryAdapter, repairBackup } = await import('../src/store/storage');
+    const d = seedData();
+    d.absences.push({ id: 'ruim', asbId: 'id012', from: '2026-09-28', to: '20266-09-28', reason: 'Folga' });
+    d.absences.push({ id: 'boa', asbId: 'id013', from: '2026-09-28', to: '2026-09-29', reason: 'Férias' });
+    const adapter = new MemoryAdapter();
+    adapter.raw = JSON.stringify(d);
+    const r = await loadInitial(adapter);
+    expect(r.data).toBeNull();
+    expect(r.recovery?.error).toContain('Ausência 1');
+    expect(adapter.raw).toBe(JSON.stringify(d)); // intocado
+    const rep = repairBackup(r.recovery!.raw);
+    expect(rep.data.absences.map((a) => a.id)).toEqual(['boa']);
+    expect(rep.removed).toEqual(['ausência com dados inválidos']);
+  });
+
+  it('rodízio com data de início inválida é recusado e reparado para hoje', async () => {
+    const { repairBackup } = await import('../src/store/storage');
+    const d = seedData();
+    const t = d.tasks.find((x) => x.assignment.mode === 'rotation')!;
+    (t.assignment as { startDate: string }).startDate = '0202-01-01';
+    expect(() => parseBackup(JSON.stringify(d))).toThrow(/rodízio/);
+    const rep = repairBackup(JSON.stringify(d));
+    expect(rep.removed[0]).toContain('data de início do rodízio');
+  });
+
+  it('texto que nem é JSON não pode ser reparado, mas continua salvo', async () => {
+    const { loadInitial, MemoryAdapter, repairBackup } = await import('../src/store/storage');
+    const adapter = new MemoryAdapter();
+    adapter.raw = '{quebrado';
+    const r = await loadInitial(adapter);
+    expect(r.recovery?.raw).toBe('{quebrado');
+    expect(() => repairBackup('{quebrado')).toThrow(BackupError);
   });
 });

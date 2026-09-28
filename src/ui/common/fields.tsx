@@ -1,5 +1,6 @@
+import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { HOURS, WEEKDAY_SHORT } from '../../domain';
+import { HOURS, WEEKDAY_SHORT, isValidIso } from '../../domain';
 import { formatHour } from '../../domain';
 
 export function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -42,5 +43,27 @@ export function DaysPicker({ value, onChange, allowed }: { value: number[]; onCh
         </label>
       ))}
     </div>
+  );
+}
+
+/**
+ * Campo de data que só avisa quando a data está completa e válida (ano entre 2000
+ * e 2100). Enquanto a pessoa digita o ano, o valor parcial fica só no campo.
+ */
+export function DateInput({ value, onChange, ariaLabel, min }: { value: string; onChange: (iso: string) => void; ariaLabel?: string; min?: string }) {
+  const [text, setText] = useState(value);
+  useEffect(() => setText(value), [value]);
+  return (
+    <input
+      type="date"
+      value={text}
+      min={min}
+      aria-label={ariaLabel}
+      onChange={(e) => {
+        setText(e.target.value);
+        if (isValidIso(e.target.value)) onChange(e.target.value);
+      }}
+      onBlur={() => { if (!isValidIso(text)) setText(value); }}
+    />
   );
 }

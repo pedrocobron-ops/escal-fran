@@ -1,5 +1,5 @@
 // Histórico da escala: dias passados mostram a estrutura (salas, dentistas,
-// ASBs, escala base, tarefas, dias de funcionamento) como ela estava naquele dia.
+// ASBs, escala base, tarefas, dias de funcionamento, regras fixas) como ela estava naquele dia.
 //
 // Cada registro guarda como os campos estavam até `until`. Para montar um dia D,
 // parte-se da estrutura atual e aplicam-se, do mais novo para o mais antigo,

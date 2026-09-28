@@ -121,6 +121,12 @@ export interface DentistAbsence {
   reason: AbsenceReason;
 }
 
+/** Data específica em que o CEO não abre (feriado, ponto facultativo, reforma...). */
+export interface ClosedDate {
+  date: IsoDate;
+  note?: string;
+}
+
 /** `livre` só existe em ajuste de dia: "nesse dia, nessa hora, a ASB não tem atribuição". */
 export type DaySlotKind = SlotKind | 'livre';
 
@@ -132,10 +138,12 @@ export interface DaySlot {
   hour: number;
   kind: DaySlotKind;
   roomId?: Id;
+  /** Tirada à mão de uma cobertura automática: o app não a usa para cobrir nesse horário. */
+  hold?: boolean;
 }
 
 /** Campos da estrutura da escala que mudam com o tempo e precisam de histórico. */
-export const STRUCTURE_KEYS = ['rooms', 'dentists', 'asbs', 'base', 'tasks', 'openDays'] as const;
+export const STRUCTURE_KEYS = ['rooms', 'dentists', 'asbs', 'base', 'tasks', 'openDays', 'rules'] as const;
 export type StructureKey = (typeof STRUCTURE_KEYS)[number];
 
 /**
@@ -150,6 +158,7 @@ export interface StructureSnapshot {
   base?: BaseSchedule;
   tasks?: Task[];
   openDays?: number[];
+  rules?: string[];
 }
 
 export interface AppData {
@@ -173,6 +182,8 @@ export interface AppData {
   dayOverrides?: DaySlot[];
   /** Histórico da estrutura, do mais antigo para o mais recente. */
   history?: StructureSnapshot[];
+  /** Feriados e outras datas em que o CEO não abre. */
+  closedDates?: ClosedDate[];
   /** Primeiro dia em que o app registrou a escala neste navegador. */
   historySince?: IsoDate;
 }
@@ -210,6 +221,8 @@ export interface EffectiveSlot {
   coveringFor?: Id;
   /** Remanejamento automático: sala de onde a ASB saiu (se estava numa sala). */
   movedFrom?: Id;
+  /** Remanejamento automático: de onde a ASB saiu quando não era sala (ex.: apoio). */
+  movedFromKind?: SlotKind;
   /** true quando o bloco está dentro de uma hora extra da ASB nessa data. */
   extra?: boolean;
 }
@@ -218,7 +231,7 @@ export interface EffectiveSlot {
 export interface UncoveredSlot {
   slot: Slot;
   absenceId: Id;
-  reason: 'sem-substituta' | 'substituta-ausente' | 'substituta-ocupada' | 'substituta-fora-do-contrato';
+  reason: 'sem-substituta' | 'substituta-ausente' | 'substituta-inativa' | 'substituta-ocupada' | 'substituta-retirada' | 'substituta-fora-do-contrato';
   /** O que a substituta estava fazendo nesse bloco, se ocupada. */
   busyWith?: SlotKind;
   substituteId?: Id;
@@ -228,8 +241,10 @@ export interface EffectiveDay {
   date: IsoDate;
   /** 0=dom ... 6=sáb. */
   weekday: number;
-  /** false quando o CEO não abre nesse dia da semana. */
+  /** false quando o CEO não abre nesse dia (dia da semana fechado ou feriado). */
   open: boolean;
+  /** Feriado ou data fechada: o motivo cadastrado. */
+  closedNote?: string;
   slots: EffectiveSlot[];
   /** Ausências que valem nesse dia. */
   absences: Absence[];
@@ -269,5 +284,7 @@ export interface Alert {
   message: string;
   hour?: number;
   roomId?: Id;
+  /** Quando o alerta envolve mais de uma sala (ex.: ASB dividida entre duas). */
+  roomIds?: Id[];
   asbId?: Id;
 }

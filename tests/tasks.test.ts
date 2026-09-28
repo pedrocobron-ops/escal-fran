@@ -40,10 +40,10 @@ describe('tarefas que seguem o dentista', () => {
       { type: 'asb', asbId: ID.amanda },
       { type: 'asb', asbId: ID.andrea },
     ]);
-    // CME da manhã (Francisco 08h–11h) fica sem ninguém
+    // CME da manhã (Francisco 08h–11h): às 10h a Ana sai do apoio e cobre a Sala 1
     const cme = res(d, 'id018');
-    expect(cme.holders).toEqual([]);
-    expect(cme.reason).toContain('Ninguém');
+    expect(cme.holders).toEqual([{ type: 'asb', asbId: ID.ana }]);
+    expect(cme.reason).toBe('Na Sala 1 com Dr. Francisco: Ana (10h–11h).');
   });
 
   it('substituta externa aparece pelo nome', () => {

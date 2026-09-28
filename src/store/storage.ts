@@ -2,17 +2,38 @@
 // só o adapter, sem mexer no resto do app.
 
 import type { AppData } from '../domain';
-import { todayIso } from '../domain';
+import { isValidIso, todayIso } from '../domain';
 import seedJson from '../data/seed.json';
 
 export const STORAGE_KEY = 'escala-ceo:data';
 export const CURRENT_VERSION = 1;
 
+/** Resultado de ler o armazenamento: vazio, dados válidos, ou dados com problema (nunca descartados). */
+export type LoadResult =
+  | { status: 'empty' }
+  | { status: 'ok'; data: AppData }
+  | { status: 'invalid'; raw: string; error: string };
+
 /** Contrato que qualquer backend precisa cumprir. */
 export interface StorageAdapter {
-  load(): Promise<AppData | null>;
+  load(): Promise<LoadResult>;
   save(data: AppData): Promise<void>;
   clear(): Promise<void>;
+  /** Guarda uma cópia do texto bruto antes de qualquer troca arriscada. Devolve a chave usada. */
+  keepCopy(raw: string): Promise<string>;
+  /** Avisa quando outra aba ou janela grava dados novos. Devolve a função para parar de ouvir. */
+  subscribe?(onChange: (data: AppData) => void): () => void;
+}
+
+export const COPY_PREFIX = 'escala-ceo:copia:';
+
+function interpret(raw: string | null): LoadResult {
+  if (!raw) return { status: 'empty' };
+  try {
+    return { status: 'ok', data: parseBackup(raw) };
+  } catch (e) {
+    return { status: 'invalid', raw, error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 export function seedData(): AppData {
@@ -22,14 +43,8 @@ export function seedData(): AppData {
 export class LocalStorageAdapter implements StorageAdapter {
   constructor(private readonly key: string = STORAGE_KEY, private readonly store: Storage = window.localStorage) {}
 
-  async load(): Promise<AppData | null> {
-    const raw = this.store.getItem(this.key);
-    if (!raw) return null;
-    try {
-      return parseBackup(raw);
-    } catch {
-      return null;
-    }
+  async load(): Promise<LoadResult> {
+    return interpret(this.store.getItem(this.key));
   }
 
   async save(data: AppData): Promise<void> {
@@ -39,27 +54,132 @@ export class LocalStorageAdapter implements StorageAdapter {
   async clear(): Promise<void> {
     this.store.removeItem(this.key);
   }
+
+  async keepCopy(raw: string): Promise<string> {
+    const key = `${COPY_PREFIX}${new Date().toISOString()}`;
+    this.store.setItem(key, raw);
+    return key;
+  }
+
+  subscribe(onChange: (data: AppData) => void): () => void {
+    const handler = (e: StorageEvent) => {
+      if (e.storageArea !== this.store || e.key !== this.key) return;
+      const r = interpret(e.newValue);
+      // Dados com problema vindos da outra aba não entram aqui; esta aba segue com os seus.
+      if (r.status === 'ok') onChange(migrate(r.data));
+    };
+    window.addEventListener('storage', handler);
+    return () => window.removeEventListener('storage', handler);
+  }
 }
 
-/** Adapter em memória, útil em testes. */
+/**
+ * localStorage do navegador ou, se ele estiver bloqueado (dados do site bloqueados,
+ * alguns modos privados), um armazenamento só em memória, avisando que nada fica salvo.
+ */
+export function browserAdapter(): { adapter: StorageAdapter; blocked: boolean } {
+  try {
+    const ls = window.localStorage;
+    const probe = `${STORAGE_KEY}:teste`;
+    ls.setItem(probe, '1');
+    ls.removeItem(probe);
+    return { adapter: new LocalStorageAdapter(STORAGE_KEY, ls), blocked: false };
+  } catch {
+    return { adapter: new MemoryAdapter(), blocked: true };
+  }
+}
+
+/** Adapter em memória, útil em testes. Guarda o texto bruto, como o localStorage. */
 export class MemoryAdapter implements StorageAdapter {
-  private data: AppData | null = null;
+  raw: string | null = null;
+  copies: Record<string, string> = {};
   async load() {
-    return this.data ? structuredClone(this.data) : null;
+    return interpret(this.raw);
   }
   async save(data: AppData) {
-    this.data = structuredClone(data);
+    this.raw = JSON.stringify(data);
   }
   async clear() {
-    this.data = null;
+    this.raw = null;
+  }
+  async keepCopy(raw: string) {
+    const key = `${COPY_PREFIX}${Object.keys(this.copies).length + 1}`;
+    this.copies[key] = raw;
+    return key;
   }
 }
 
-/** Carrega o que está salvo ou, no primeiro uso, o seed. */
-export async function loadInitial(adapter: StorageAdapter): Promise<{ data: AppData; fromSeed: boolean }> {
-  const saved = await adapter.load();
-  if (saved) return { data: migrate(saved), fromSeed: false };
+export type InitialLoad =
+  | { data: AppData; fromSeed: boolean; recovery?: undefined }
+  | { data: null; fromSeed: false; recovery: { raw: string; error: string } };
+
+/**
+ * Carrega o que está salvo ou, no primeiro uso, o seed. Se o que está salvo tiver
+ * problema, NÃO carrega o seed por cima: devolve o texto para a tela de recuperação.
+ */
+export async function loadInitial(adapter: StorageAdapter): Promise<InitialLoad> {
+  const r = await adapter.load();
+  if (r.status === 'ok') return { data: migrate(r.data), fromSeed: false };
+  if (r.status === 'invalid') return { data: null, fromSeed: false, recovery: { raw: r.raw, error: r.error } };
   return { data: seedData(), fromSeed: true };
+}
+
+export interface RepairReport {
+  data: AppData;
+  removed: string[];
+}
+
+/**
+ * Tenta salvar o que dá de um backup com problema: tira registros com datas ou
+ * campos inválidos e corrige datas de início de rodízio. Lança BackupError se o
+ * texto nem for JSON ou faltar a estrutura principal.
+ */
+export function repairBackup(json: string): RepairReport {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(json);
+  } catch {
+    throw new BackupError('O arquivo não é um JSON válido; não dá para reparar.');
+  }
+  if (!isRecord(raw)) throw new BackupError('O conteúdo não tem o formato da escala; não dá para reparar.');
+  const removed: string[] = [];
+  const r = raw as Record<string, unknown>;
+  const list = (k: string) => (isArray(r[k]) ? (r[k] as unknown[]) : []);
+  const keep = <T,>(k: string, label: string, ok: (x: Record<string, unknown>) => boolean): T[] => {
+    const out: T[] = [];
+    for (const x of list(k)) {
+      if (isRecord(x) && ok(x)) out.push(x as T);
+      else removed.push(`${label} ${isRecord(x) && typeof x.name === 'string' ? `"${x.name}" ` : ''}com dados inválidos`);
+    }
+    return out;
+  };
+  r.rooms = keep('rooms', 'sala', (x) => isStr(x.id) && isStr(x.name));
+  const roomIds = new Set((r.rooms as Array<{ id: string }>).map((x) => x.id));
+  r.dentists = keep('dentists', 'dentista', (x) => isStr(x.id) && isStr(x.name) && isStr(x.roomId) && roomIds.has(x.roomId) && isNum(x.start) && isNum(x.end));
+  r.asbs = keep('asbs', 'ASB', (x) => isStr(x.id) && isStr(x.name) && isNum(x.start) && isNum(x.end));
+  const asbIds = new Set((r.asbs as Array<{ id: string }>).map((x) => x.id));
+  const base = isRecord(r.base) ? r.base : { slots: [] };
+  const slots = isArray(base.slots) ? base.slots : [];
+  const goodSlots = slots.filter((s) => isRecord(s) && isStr(s.asbId) && asbIds.has(s.asbId) && isNum(s.hour) && isStr(s.kind) && SLOT_KINDS.includes(s.kind));
+  if (goodSlots.length < slots.length) removed.push(`${slots.length - goodSlots.length} ficha(s) da escala com dados inválidos`);
+  r.base = { slots: goodSlots };
+  r.tasks = keep('tasks', 'tarefa', (x) => isStr(x.id) && isStr(x.name) && isArray(x.days) && isRecord(x.assignment) && isStr(x.assignment.mode) && TASK_MODES.includes(x.assignment.mode));
+  for (const t of r.tasks as Array<{ name: string; assignment: { mode: string; startDate?: unknown } }>) {
+    if (t.assignment.mode === 'rotation' && !isIso(t.assignment.startDate)) {
+      t.assignment.startDate = todayIso();
+      removed.push(`data de início do rodízio "${t.name}" era inválida (passou a ser hoje)`);
+    }
+  }
+  r.absences = keep('absences', 'ausência', (x) => isStr(x.id) && isStr(x.asbId) && isIso(x.from) && isIso(x.to) && (x.to as string) >= (x.from as string) && isStr(x.reason));
+  r.rules = list('rules').filter((x) => typeof x === 'string');
+  if (r.extraShifts !== undefined) r.extraShifts = keep('extraShifts', 'hora extra', (x) => isStr(x.id) && isStr(x.asbId) && isIso(x.date) && isNum(x.start) && isNum(x.end));
+  if (r.dentistAbsences !== undefined) r.dentistAbsences = keep('dentistAbsences', 'folga de dentista', (x) => isStr(x.id) && isStr(x.dentistId) && isIso(x.from) && isIso(x.to));
+  if (r.dayOverrides !== undefined) r.dayOverrides = keep('dayOverrides', 'ajuste de dia', (x) => isStr(x.id) && isStr(x.asbId) && isIso(x.date) && isNum(x.hour) && isStr(x.kind) && [...SLOT_KINDS, 'livre'].includes(x.kind));
+  if (r.history !== undefined) r.history = keep('history', 'registro de histórico', (x) => isIso(x.until));
+  if (r.closedDates !== undefined) r.closedDates = keep('closedDates', 'dia fechado', (x) => isIso(x.date) && (x.note === undefined || isStr(x.note)));
+  if (r.historySince !== undefined && !isIso(r.historySince)) delete r.historySince;
+  if (!isArray(r.openDays)) r.openDays = [1, 2, 3, 4, 5];
+  return { data: parseBackup(JSON.stringify(r)), removed };
 }
 
 export function exportBackup(data: AppData): string {
@@ -96,7 +216,7 @@ function isNum(v: unknown): v is number {
 }
 
 function isIso(v: unknown): boolean {
-  return typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+  return isValidIso(v);
 }
 
 /** Valida um JSON de backup, registro a registro. Lança BackupError com mensagem em português. */
@@ -136,9 +256,11 @@ export function parseBackup(json: string): AppData {
   });
   (raw.tasks as unknown[]).forEach((t, i) => {
     need(isRecord(t) && isStr(t.id) && isStr(t.name) && isArray(t.days) && isRecord(t.assignment) && isStr(t.assignment.mode) && TASK_MODES.includes(t.assignment.mode), `Tarefa ${i + 1} incompleta.`);
+    const a = (t as { assignment: { mode: string; startDate?: unknown } }).assignment;
+    if (a.mode === 'rotation') need(isIso(a.startDate), `Tarefa ${i + 1} tem data de início do rodízio inválida.`);
   });
   (raw.absences as unknown[]).forEach((a, i) => {
-    need(isRecord(a) && isStr(a.id) && isStr(a.asbId) && isIso(a.from) && isIso(a.to) && isStr(a.reason), `Ausência ${i + 1} incompleta.`);
+    need(isRecord(a) && isStr(a.id) && isStr(a.asbId) && isIso(a.from) && isIso(a.to) && isStr(a.reason), `Ausência ${i + 1} incompleta ou com data inválida.`);
   });
   (raw.rules as unknown[]).forEach((r, i) => need(typeof r === 'string', `Regra ${i + 1} precisa ser texto.`));
   if (raw.extraShifts !== undefined) {
@@ -152,6 +274,10 @@ export function parseBackup(json: string): AppData {
   if (raw.history !== undefined) {
     need(isArray(raw.history), 'O campo "history" precisa ser uma lista.');
     (raw.history as unknown[]).forEach((h, i) => need(isRecord(h) && isIso(h.until), `Registro de histórico ${i + 1} sem data.`));
+  }
+  if (raw.closedDates !== undefined) {
+    need(isArray(raw.closedDates), 'O campo "closedDates" precisa ser uma lista.');
+    (raw.closedDates as unknown[]).forEach((c, i) => need(isRecord(c) && isIso(c.date) && (c.note === undefined || isStr(c.note)), `Dia fechado ${i + 1} com data inválida.`));
   }
   if (raw.dayOverrides !== undefined) {
     need(isArray(raw.dayOverrides), 'O campo "dayOverrides" precisa ser uma lista.');
@@ -172,6 +298,7 @@ export function migrate(data: AppData): AppData {
   if (!Array.isArray(out.dentistAbsences)) out.dentistAbsences = [];
   if (!Array.isArray(out.dayOverrides)) out.dayOverrides = [];
   if (!Array.isArray(out.history)) out.history = [];
+  if (!Array.isArray(out.closedDates)) out.closedDates = [];
   out.asbs = out.asbs.map((a) => ({ ...a, active: a.active !== false, lunch: a.lunch === true }));
   return out;
 }

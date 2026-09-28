@@ -3,11 +3,11 @@ import { DndContext, KeyboardSensor, MouseSensor, TouchSensor, closestCenter, us
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { Asb, Person, Task, TaskMode, TaskResolution } from '../../domain';
-import { WEEKDAY_LABEL, WEEKDAY_SHORT, dataForDate, formatDate, formatHour, resolveTask, rotationTitular, todayIso, weekdayOf } from '../../domain';
+import { WEEKDAY_LABEL, WEEKDAY_SHORT, dataForDate, findAsbAnywhere, formatDate, formatHour, resolveTask, rotationTitular, todayIso, weekdayOf } from '../../domain';
 import { newId, useData, useStore } from '../../store/useStore';
 import { colorMap } from '../colors';
 import { Modal, useConfirm } from '../common/Modal';
-import { DaysPicker, Field, HourSelect } from '../common/fields';
+import { DateInput, DaysPicker, Field, HourSelect } from '../common/fields';
 
 export function TasksScreen() {
   const data = useData();
@@ -28,7 +28,7 @@ export function TasksScreen() {
         <h1>Tarefas e rodízios</h1>
         <span className="spacer" />
         <label className="muted small">Resolver para o dia</label>
-        <input type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} />
+        <DateInput value={date} onChange={setDate} ariaLabel="Dia" />
         <span className="muted">{WEEKDAY_LABEL[weekdayOf(date)]}</span>
         <button className="btn primary" onClick={() => setEditing('new')}>Nova tarefa</button>
       </div>
@@ -56,7 +56,7 @@ export function TasksScreen() {
 }
 
 function personLabel(data: ReturnType<typeof useData>, p: Person): string {
-  return p.type === 'asb' ? (data.asbs.find((a) => a.id === p.asbId)?.name ?? '?') : `${p.name} (externa)`;
+  return p.type === 'asb' ? (findAsbAnywhere(data, p.asbId)?.name ?? '?') : `${p.name} (externa)`;
 }
 
 function TaskCard({ task, date, colors, onEdit, onRemove }: { task: Task; date: string; colors: Map<string, string>; onEdit: () => void; onRemove: () => void }) {
@@ -106,10 +106,12 @@ type Rotation = Extract<TaskMode, { mode: 'rotation' }>;
 
 function RotationEditor({ task, assignment, date, colors, onChange }: { task: Task; assignment: Rotation; date: string; colors: Map<string, string>; onChange: (a: Rotation) => void }) {
   const data = useData();
-  const titular = rotationTitular(assignment, date);
+  // Numa data passada vale a ordem de então (se o rodízio foi reordenado depois).
+  const then = dataForDate(data, date).tasks.find((t) => t.id === task.id)?.assignment;
+  const titular = rotationTitular(then && then.mode === 'rotation' ? then : assignment, date);
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 4 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 300, tolerance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
   const onDragEnd = (e: DragEndEvent) => {
@@ -124,7 +126,7 @@ function RotationEditor({ task, assignment, date, colors, onChange }: { task: Ta
     <div style={{ marginTop: 10 }}>
       <div className="field-row">
         <Field label="Início do rodízio">
-          <input type="date" value={assignment.startDate} onChange={(e) => e.target.value && onChange({ ...assignment, startDate: e.target.value })} />
+          <DateInput value={assignment.startDate} onChange={(v) => onChange({ ...assignment, startDate: v })} ariaLabel="Início do rodízio" />
         </Field>
         <Field label="Período">
           <select value={assignment.period} onChange={(e) => onChange({ ...assignment, period: e.target.value as Rotation['period'] })}>

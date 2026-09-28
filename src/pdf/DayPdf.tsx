@@ -10,14 +10,18 @@ export function DayPdf({ m }: { m: DayPdfModel }) {
         <Text style={s.subtitle}>{m.dateLabel}</Text>
         <Text style={s.meta}>{m.hoursLabel}</Text>
 
-        {!m.open && <Text style={s.warn}>O CEO não abre neste dia da semana.</Text>}
-
+        {!m.open ? (
+          <Text style={[s.warn, { marginTop: 12, fontSize: 11 }]}>
+            {m.closedNote !== undefined ? `CEO fechado nesta data (${m.closedNote}). Não há escala para este dia.` : 'O CEO não abre neste dia da semana. Não há escala para este dia.'}
+          </Text>
+        ) : (
+        <>
         <Text style={s.h2}>Ausências e coberturas</Text>
         {m.absences.length === 0 ? (
           <Text style={s.muted}>{m.notes.length > 0 ? 'Sem ausências de ASB.' : 'Sem ausências. A escala do dia é igual à escala base.'}</Text>
         ) : (
           <View style={s.table}>
-            <View style={[s.row, s.head]}>
+            <View style={[s.row, s.head]} fixed>
               <Text style={s.cell}>ASB</Text>
               <Text style={s.cell}>Período</Text>
               <Text style={s.cell}>Motivo</Text>
@@ -45,9 +49,9 @@ export function DayPdf({ m }: { m: DayPdfModel }) {
           </View>
         )}
 
-        <Text style={s.h2}>Quadro do dia</Text>
+        <Text style={s.h2} minPresenceAhead={120}>Quadro do dia</Text>
         <View style={s.table}>
-          <View style={[s.row, s.head]}>
+          <View style={[s.row, s.head]} fixed>
             <Text style={[s.cell, { flexBasis: 52, flexGrow: 0 }]}>Horário</Text>
             {m.columns.map((c) => <Text key={c} style={s.cell}>{c}</Text>)}
           </View>
@@ -57,17 +61,17 @@ export function DayPdf({ m }: { m: DayPdfModel }) {
               {r.cells.map((c, i) => (
                 <View key={i} style={s.cell}>
                   {c.dentist ? <Text style={[s.small, c.dentist === 'sala vazia' ? s.muted : {}]}>{c.dentist}</Text> : null}
-                  {c.asb ? <Text style={c.asb === 'SEM ASB' ? s.warn : s.bold}>{c.asb}</Text> : null}
+                  {c.asb ? <Text style={c.asb.startsWith('SEM ASB') ? s.warn : s.bold}>{c.asb}</Text> : null}
                 </View>
               ))}
             </View>
           ))}
         </View>
 
-        <View wrap={false}>
-        <Text style={s.h2}>Escala das ASBs no dia</Text>
+        <View>
+        <Text style={s.h2} minPresenceAhead={90}>Escala das ASBs no dia</Text>
         <View style={s.table}>
-          <View style={[s.row, s.head]}>
+          <View style={[s.row, s.head]} fixed>
             <Text style={[s.cell, { flexBasis: 70, flexGrow: 0 }]}>ASB</Text>
             <Text style={[s.cell, { flexBasis: 60, flexGrow: 0 }]}>Contrato</Text>
             <Text style={s.cell}>Manhã (07h–13h)</Text>
@@ -91,7 +95,7 @@ export function DayPdf({ m }: { m: DayPdfModel }) {
           <Text style={s.muted}>Nenhuma tarefa neste dia.</Text>
         ) : (
           <View style={s.table}>
-            <View style={[s.row, s.head]}>
+            <View style={[s.row, s.head]} fixed>
               <Text style={[s.cell, { flexBasis: 170, flexGrow: 0 }]}>Tarefa</Text>
               <Text style={[s.cell, { flexBasis: 110, flexGrow: 0 }]}>Quem faz</Text>
               <Text style={s.cell}>Por quê</Text>
@@ -119,6 +123,9 @@ export function DayPdf({ m }: { m: DayPdfModel }) {
               </View>
             ))}
           </View>
+        )}
+
+        </>
         )}
 
         <View style={s.footer} fixed>

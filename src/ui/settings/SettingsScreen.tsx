@@ -1,9 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
-import { WEEKDAY_LABEL, diffDays, formatDate, todayIso } from '../../domain';
+import { WEEKDAY_LABEL, diffDays, formatDate, isValidIso, todayIso, weekdayOf } from '../../domain';
 import { BackupError, backupFileName, exportBackup, parseBackup } from '../../store/storage';
 import { useData, useStore } from '../../store/useStore';
 import { Modal, Notice, useConfirm } from '../common/Modal';
 import { downloadBlob } from '../common/download';
+import { DateInput } from '../common/fields';
+
+function normalizeRules(text: string): string[] {
+  return text.split('\n').map((r) => r.trim()).filter(Boolean);
+}
 
 export function SettingsScreen() {
   const data = useData();
@@ -18,7 +23,35 @@ export function SettingsScreen() {
   const [notice, setNotice] = useState<{ title: string; message: string } | null>(null);
   const [exported, setExported] = useState<{ url: string; name: string } | null>(null);
   const [rulesText, setRulesText] = useState(data.rules.join('\n'));
-  useEffect(() => setRulesText(data.rules.join('\n')), [data.rules]);
+  // Só troca o texto do campo quando as regras mudam por fora (desfazer, importar);
+  // a gravação do próprio campo não mexe no que está sendo digitado (espaços, linha nova).
+  useEffect(() => {
+    setRulesText((t) => (normalizeRules(t).join('\n') === data.rules.join('\n') ? t : data.rules.join('\n')));
+  }, [data.rules]);
+  // Regras gravam enquanto se digita (meio segundo depois da última tecla) e na hora
+  // ao sair do campo, trocar de tela ou fechar a página.
+  const rulesRef = useRef({ text: rulesText, saved: data.rules.join('\n') });
+  rulesRef.current = { text: rulesText, saved: data.rules.join('\n') };
+  const saveRules = useRef(() => {
+    const { text, saved } = rulesRef.current;
+    const rules = normalizeRules(text);
+    if (rules.join('\n') !== saved) useStore.getState().apply((x) => { x.rules = rules; });
+  }).current;
+  useEffect(() => {
+    const t = setTimeout(saveRules, 500);
+    return () => clearTimeout(t);
+  }, [rulesText, saveRules]);
+  useEffect(() => {
+    const now = () => { saveRules(); useStore.getState().flush(); };
+    const onHide = () => { if (document.visibilityState === 'hidden') now(); };
+    window.addEventListener('pagehide', now);
+    document.addEventListener('visibilitychange', onHide);
+    return () => {
+      window.removeEventListener('pagehide', now);
+      document.removeEventListener('visibilitychange', onHide);
+      saveRules();
+    };
+  }, [saveRules]);
   useEffect(() => {
     if (!exported) return;
     return () => URL.revokeObjectURL(exported.url);
@@ -83,16 +116,18 @@ export function SettingsScreen() {
         </div>
       </section>
 
+      <ClosedDates />
+
       <section className="card">
         <h2>Backup</h2>
         <p className="muted small">
-          Os dados ficam salvos neste navegador, neste computador, e continuam salvos ao fechar a página. Eles se perdem se alguém limpar os dados do navegador, se usar janela anônima, ou, no iPhone e no Safari, se o site ficar muitos dias sem ser aberto. Exporte um arquivo de vez em quando e guarde num lugar seguro. Para usar em outro computador, importe o arquivo lá.
+          Os dados ficam salvos neste navegador, neste aparelho, e continuam salvos ao fechar a página. Celular e computador guardam cada um a sua cópia: o que é feito num não aparece no outro. Eles se perdem se alguém limpar os dados do navegador, se usar janela anônima, ou, no iPhone e no Safari, se o site ficar muitos dias sem ser aberto. Exporte um arquivo de vez em quando e guarde num lugar seguro. Para usar em outro computador, importe o arquivo lá.
         </p>
         <p className="small">
           {persisted === true
             ? 'Armazenamento protegido: o navegador confirmou que não vai apagar os dados sozinho.'
             : persisted === false
-              ? 'O navegador não garantiu proteção dos dados. Use sempre o mesmo navegador (Chrome ou Edge no computador são os mais seguros) e mantenha o backup em dia.'
+              ? 'O navegador ainda não garantiu proteção dos dados. Isso costuma mudar sozinho com o uso frequente do site; adicionar o site aos favoritos (ou instalá-lo pelo menu do navegador) ajuda. Até lá, use sempre o mesmo navegador e mantenha o backup em dia.'
               : 'Este navegador não informa se protege os dados. Mantenha o backup em dia.'}
         </p>
         <p className="small">
@@ -121,11 +156,7 @@ export function SettingsScreen() {
           style={{ width: '100%', padding: 8, border: '1px solid var(--line-strong)', borderRadius: 6 }}
           value={rulesText}
           onChange={(e) => setRulesText(e.target.value)}
-          onBlur={() => {
-            const rules = rulesText.split('\n').map((r) => r.trim()).filter(Boolean);
-            if (rules.join('\n') !== data.rules.join('\n')) apply((x) => { x.rules = rules; });
-            else setRulesText(rules.join('\n'));
-          }}
+          onBlur={saveRules}
         />
       </section>
 
@@ -141,5 +172,68 @@ export function SettingsScreen() {
       )}
       {notice && <Notice title={notice.title} message={notice.message} onClose={() => setNotice(null)} />}
     </div>
+  );
+}
+
+/** Feriados e outros dias em que o CEO não abre, mesmo sendo dia de funcionamento. */
+function ClosedDates() {
+  const data = useData();
+  const apply = useStore((s) => s.apply);
+  const today = todayIso();
+  const [date, setDate] = useState(today);
+  const [note, setNote] = useState('');
+  const [showPast, setShowPast] = useState(false);
+  const list = [...(data.closedDates ?? [])].sort((a, b) => a.date.localeCompare(b.date));
+  const visible = showPast ? list : list.filter((c) => c.date >= today);
+  const exists = list.some((c) => c.date === date);
+  const add = () => {
+    if (!isValidIso(date) || exists) return;
+    apply((x) => {
+      x.closedDates = [...(x.closedDates ?? []), { date, ...(note.trim() ? { note: note.trim() } : {}) }].sort((a, b) => a.date.localeCompare(b.date));
+    });
+    setNote('');
+  };
+  return (
+    <section className="card">
+      <h2>Feriados e dias fechados</h2>
+      <p className="muted small">
+        Datas em que o CEO não abre. Nelas o quadro do dia fica vazio, não há alertas nem tarefas, e ausências e horas extras não contam.
+      </p>
+      <div className="field-row" style={{ alignItems: 'flex-end' }}>
+        <div className="field" style={{ flex: '0 0 auto' }}>
+          <label>Data</label>
+          <DateInput value={date} onChange={setDate} ariaLabel="Data fechada" />
+        </div>
+        <div className="field">
+          <label>Motivo (opcional)</label>
+          <input value={note} maxLength={60} placeholder="Ex.: Feriado municipal" onChange={(e) => setNote(e.target.value)} />
+        </div>
+        <div className="field" style={{ flex: '0 0 auto' }}>
+          <button className="btn primary" onClick={add} disabled={exists}>{exists ? 'Já cadastrada' : 'Adicionar'}</button>
+        </div>
+      </div>
+      {visible.length > 0 ? (
+        <ul className="plain-list">
+          {visible.map((c) => (
+            <li key={c.date}>
+              <span>
+                {formatDate(c.date)} ({WEEKDAY_LABEL[weekdayOf(c.date)].toLowerCase()}){c.note ? `: ${c.note}` : ''}
+              </span>
+              <button
+                className="btn sm"
+                onClick={() => apply((x) => { x.closedDates = (x.closedDates ?? []).filter((y) => y.date !== c.date); })}
+              >
+                Remover
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="muted small">{list.length > 0 ? 'Nenhuma data fechada daqui para a frente.' : 'Nenhuma data cadastrada.'}</p>
+      )}
+      {list.some((c) => c.date < today) && (
+        <button className="btn sm" onClick={() => setShowPast((v) => !v)}>{showPast ? 'Esconder datas passadas' : 'Mostrar datas passadas'}</button>
+      )}
+    </section>
   );
 }

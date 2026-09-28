@@ -70,3 +70,16 @@ describe('horas', () => {
     expect(groupHours([])).toEqual([]);
   });
 });
+
+describe('datas fora do comum', () => {
+  it('anos de 0 a 99 não viram 1900', async () => {
+    const { addDays, isValidIso, toIso } = await import('../src/domain');
+    expect(addDays('0020-12-31', 1)).toBe('0021-01-01');
+    expect(toIso(20, 1, 1)).toBe('0020-01-01');
+    expect(isValidIso('2026-02-29')).toBe(false);
+    expect(isValidIso('2028-02-29')).toBe(true);
+    expect(isValidIso('0202-01-01')).toBe(false);
+    expect(isValidIso('20266-09-28')).toBe(false);
+    expect(isValidIso('2026-13-01')).toBe(false);
+  });
+});

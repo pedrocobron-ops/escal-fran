@@ -5,6 +5,7 @@ import { useData } from '../store/useStore';
 import type { YearMonth } from '../ui/common/MonthPicker';
 import { Modal, Notice } from '../ui/common/Modal';
 import { downloadBlob } from '../ui/common/download';
+import { DateInput } from '../ui/common/fields';
 
 interface Ready {
   url: string;
@@ -14,6 +15,54 @@ interface Ready {
 
 function formatSize(bytes: number): string {
   return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+/** Janela "PDF pronto", com baixar, abrir e fechar (os botões quebram linha no celular). */
+function ReadyModal({ ready, onClose }: { ready: Ready; onClose: () => void }) {
+  return (
+    <Modal title="PDF pronto" onClose={onClose}>
+      <p>
+        <strong>{ready.name}</strong> ({formatSize(ready.size)}). Se o download não começou sozinho, use o botão abaixo.
+      </p>
+      <div className="modal-actions wrap">
+        <a className="btn primary" href={ready.url} download={ready.name}>Baixar PDF</a>
+        <a className="btn" href={ready.url} target="_blank" rel="noopener noreferrer">Abrir em nova aba</a>
+        <button className="btn" onClick={onClose}>Fechar</button>
+      </div>
+    </Modal>
+  );
+}
+
+/** Botão "PDF deste dia", usado no Modo Dia do quadro. */
+export function DayPdfButton({ date }: { date: IsoDate }) {
+  const data = useData();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [ready, setReady] = useState<Ready | null>(null);
+  useEffect(() => {
+    if (!ready) return;
+    return () => URL.revokeObjectURL(ready.url);
+  }, [ready]);
+  const gen = async () => {
+    setBusy(true);
+    try {
+      const { dayPdfBlob } = await import('./generate');
+      const blob = await dayPdfBlob(data, date);
+      const name = `escala-ceo-dia-${date}.pdf`;
+      setReady({ url: downloadBlob(blob, name), name, size: blob.size });
+    } catch (e) {
+      setError(e instanceof Error ? `${e.name}: ${e.message}` : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <button className="btn" onClick={gen} disabled={busy}>{busy ? 'Gerando...' : 'PDF deste dia'}</button>
+      {ready && <ReadyModal ready={ready} onClose={() => setReady(null)} />}
+      {error && <Notice title="Não foi possível gerar o PDF" message={<span>{error}</span>} onClose={() => setError(null)} />}
+    </>
+  );
 }
 
 /** Botões "Gerar PDF" do mês e do dia. */
@@ -80,7 +129,7 @@ export function PdfButtons({ ym }: { ym: YearMonth }) {
           <p className="muted small">A escala efetiva da data, com ausências e substituições aplicadas. Útil quando alguém falta.</p>
           <div className="field">
             <label>Data</label>
-            <input type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} autoFocus />
+            <DateInput value={date} onChange={setDate} ariaLabel="Data" />
           </div>
           <div className="modal-actions">
             <button className="btn" onClick={() => setAskDay(false)}>Cancelar</button>
@@ -88,19 +137,7 @@ export function PdfButtons({ ym }: { ym: YearMonth }) {
           </div>
         </Modal>
       )}
-      {ready && (
-        <Modal title="PDF pronto" onClose={() => setReady(null)}>
-          <p>
-            <strong>{ready.name}</strong> ({formatSize(ready.size)}). Se o download não começou sozinho, use o botão abaixo.
-          </p>
-          <div className="modal-actions" style={{ justifyContent: 'flex-start' }}>
-            <a className="btn primary" href={ready.url} download={ready.name}>Baixar PDF</a>
-            <a className="btn" href={ready.url} target="_blank" rel="noopener noreferrer">Abrir em nova aba</a>
-            <span style={{ flex: 1 }} />
-            <button className="btn" onClick={() => setReady(null)}>Fechar</button>
-          </div>
-        </Modal>
-      )}
+      {ready && <ReadyModal ready={ready} onClose={() => setReady(null)} />}
       {error && <Notice title="Não foi possível gerar o PDF" message={<span>{error}</span>} onClose={() => setError(null)} />}
     </>
   );

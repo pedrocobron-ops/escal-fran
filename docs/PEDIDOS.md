@@ -21,5 +21,10 @@ Francisco (responsável técnico do CEO, quem usa o sistema) mandou áudios e me
 - **Duas salas ao mesmo tempo**: ao soltar uma ASB numa sala quando ela já está em outra no mesmo horário, o app pergunta "Mover" ou "Cobrir as duas". Cobrir as duas gera um aviso (não crítico).
 - **Apoio de uma sala**: ao soltar uma ASB numa sala que já tem ASB, o app pergunta se ela fica "de apoio" daquela sala (etiqueta "apoio" na célula, não conta como ASB da sala e não gera aviso) ou se entra também como ASB da sala. Dá para ser apoio de uma sala e continuar na outra (gera aviso de sala dividida).
 - **Total de horas extras do mês** por ASB, contando só as horas fora do contrato (para pagamento), na Visão do mês e no PDF do mês.
-- **Histórico**: dias passados mostram a escala como estava naquele dia, mesmo depois de mudar salas, dentistas, ASBs, escala base ou tarefas. Remover alguém da equipe preserva o que já passou.
+- **Histórico**: dias passados mostram a escala como estava naquele dia, mesmo depois de mudar salas, dentistas, ASBs, escala base, tarefas, dias de funcionamento ou regras fixas. Remover alguém da equipe preserva o que já passou (inclusive quando a pessoa removida era substituta numa ausência em andamento). Remover uma ausência que já começou pergunta se é para encerrar ontem (os dias passados ficam) ou apagar tudo.
+- **Hora extra pelo quadro**: no Modo Dia, soltar uma ASB fora do horário dela pergunta se é hora extra e já registra (junta com a hora extra encostada).
+- **Folga de dentista com prévia**: o formulário mostra, nos primeiros dias, quem é remanejada para onde e quem fica disponível.
+- **Feriados e dias fechados** (`closedDates`, em Ajustes): nessas datas o quadro do dia fica vazio, sem alertas, tarefas nem horas extras a pagar.
+- **Quadro**: lembra o modo e a data ao trocar de tela; na escala base avisa o que muda hoje; tocar num dia do calendário abre o Modo Dia nessa data; botão "PDF deste dia".
+- **Duas abas abertas**: a aba que ficou para trás passa a mostrar o que foi gravado na outra, em vez de apagar.
 - PDF do mês ganhou "Folgas de dentista do mês" e "Horas extras do mês". PDF do dia lista folgas e horas extras e marca "(remanejada)" e "(extra)".

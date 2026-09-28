@@ -47,16 +47,16 @@ export function TeamScreen() {
           <button className="btn primary" onClick={() => setAsbEdit('new')}>Nova ASB</button>
         </div>
         <div className="table-wrap">
-          <table className="table">
+          <table className="table responsive">
             <thead><tr><th>Nome</th><th>Contrato</th><th>Almoço</th><th>Situação</th><th></th></tr></thead>
             <tbody>
               {[...data.asbs].sort((a, b) => a.start - b.start || a.name.localeCompare(b.name)).map((a) => (
                 <tr key={a.id}>
                   <td><span className="chip static" style={{ background: colors.get(a.id) }}>{a.name}</span></td>
-                  <td className="mono">{formatRange(a.start, a.end)}</td>
-                  <td>{a.lunch ? '1 hora' : 'não sai'}</td>
-                  <td>{a.active ? <span className="badge ok">ativa</span> : <span className="badge neutral">inativa</span>}</td>
-                  <td style={{ whiteSpace: 'nowrap' }}>
+                  <td className="mono" data-label="Contrato">{formatRange(a.start, a.end)}</td>
+                  <td data-label="Almoço">{a.lunch ? '1 hora' : 'não sai'}</td>
+                  <td data-label="Situação">{a.active ? <span className="badge ok">ativa</span> : <span className="badge neutral">inativa</span>}</td>
+                  <td className="actions">
                     <button className="btn sm" onClick={() => setAsbEdit(a)}>Editar</button>{' '}
                     <button className="btn sm danger" onClick={() => delAsb(a)}>Remover</button>
                   </td>
@@ -74,17 +74,17 @@ export function TeamScreen() {
           <button className="btn primary" onClick={() => setDentistEdit('new')} disabled={data.rooms.length === 0}>Novo dentista</button>
         </div>
         <div className="table-wrap">
-          <table className="table">
+          <table className="table responsive">
             <thead><tr><th>Nome</th><th>Especialidade</th><th>Sala</th><th>Horário</th><th>Dias</th><th></th></tr></thead>
             <tbody>
               {[...data.dentists].sort((a, b) => a.start - b.start || roomName(a.roomId).localeCompare(roomName(b.roomId))).map((x) => (
                 <tr key={x.id}>
-                  <td>{x.name}</td>
-                  <td>{x.specialty}</td>
-                  <td>{roomName(x.roomId)}</td>
-                  <td className="mono">{formatRange(x.start, x.end)}</td>
-                  <td>{(x.days && x.days.length > 0 ? x.days : [1, 2, 3, 4, 5]).map((d) => WEEKDAY_SHORT[d]).join(', ')}</td>
-                  <td style={{ whiteSpace: 'nowrap' }}>
+                  <td><strong>{x.name}</strong></td>
+                  <td data-label="Especialidade">{x.specialty}</td>
+                  <td data-label="Sala">{roomName(x.roomId)}</td>
+                  <td className="mono" data-label="Horário">{formatRange(x.start, x.end)}</td>
+                  <td data-label="Dias">{(x.days && x.days.length > 0 ? x.days : [1, 2, 3, 4, 5]).map((d) => WEEKDAY_SHORT[d]).join(', ')}</td>
+                  <td className="actions">
                     <button className="btn sm" onClick={() => setDentistEdit(x)}>Editar</button>{' '}
                     <button className="btn sm danger" onClick={() => delDentist(x)}>Remover</button>
                   </td>
@@ -102,16 +102,16 @@ export function TeamScreen() {
           <button className="btn primary" onClick={() => setRoomEdit('new')}>Nova sala</button>
         </div>
         <div className="table-wrap">
-          <table className="table">
+          <table className="table responsive">
             <thead><tr><th>Ordem</th><th>Nome</th><th>Cor</th><th>Dentistas</th><th></th></tr></thead>
             <tbody>
               {[...data.rooms].sort((a, b) => a.order - b.order).map((r) => (
                 <tr key={r.id}>
-                  <td>{r.order}</td>
-                  <td>{r.name}</td>
-                  <td><span style={{ display: 'inline-block', width: 20, height: 20, borderRadius: 4, background: r.color, verticalAlign: 'middle' }} /></td>
-                  <td>{data.dentists.filter((d) => d.roomId === r.id).map((d) => `${d.name} (${formatRange(d.start, d.end)})`).join(', ') || <span className="muted">nenhum</span>}</td>
-                  <td style={{ whiteSpace: 'nowrap' }}>
+                  <td data-label="Ordem">{r.order}</td>
+                  <td><strong>{r.name}</strong></td>
+                  <td data-label="Cor"><span style={{ display: 'inline-block', width: 20, height: 20, borderRadius: 4, background: r.color, verticalAlign: 'middle' }} /></td>
+                  <td data-label="Dentistas">{data.dentists.filter((d) => d.roomId === r.id).map((d) => `${d.name} (${formatRange(d.start, d.end)})`).join(', ') || <span className="muted">nenhum</span>}</td>
+                  <td className="actions">
                     <button className="btn sm" onClick={() => setRoomEdit(r)}>Editar</button>{' '}
                     <button className="btn sm danger" onClick={() => delRoom(r)}>Remover</button>
                   </td>

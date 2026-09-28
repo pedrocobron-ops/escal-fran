@@ -1,9 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Absence, AbsenceReason, AppData, DentistAbsence, ExtraShift, IsoDate } from '../../domain';
 import {
   ABSENCE_REASONS, WEEKDAY_SHORT, absenceFor, absencesBetween, addDays, analyze, coverageSuggestions, dataForDate, dentistAbsencesBetween,
-  effectiveDay, extraNeededToCover, findAsbAnywhere, findDentistAnywhere, firstOfMonth, formatDate, formatDayMonth, formatHour, formatRange, groupHours, isBetween,
-  isExternalSubstitute, isReasonablePeriod, isTeamSubstitute, lastOfMonth, mondayOf, outsideContract, overlappingAbsences,
+  dentistWorksOn, dentistsAt, effectiveDay, extraNeededToCover, findAsbAnywhere, findDentistAnywhere, firstOfMonth, formatDate, formatDayMonth, formatHour, formatRange, groupHours, isBetween,
+  isExternalSubstitute, isOpenOn, isReasonablePeriod, isTeamSubstitute, lastOfMonth, mondayOf, outsideContract, overlappingAbsences,
   overlappingDentistAbsences, overlappingExtras, stillUncovered, todayIso, validExtraShiftsBetween, weekdayOf,
 } from '../../domain';
 import { newId, useData, useStore } from '../../store/useStore';
@@ -11,6 +11,7 @@ import { colorMap } from '../colors';
 import { Modal, useConfirm } from '../common/Modal';
 import { Field, HourSelect } from '../common/fields';
 import { MonthPicker, currentYearMonth, type YearMonth } from '../common/MonthPicker';
+import { ChoiceDialog, type Choice } from '../board/RangeDialog';
 
 type Tab = 'asb' | 'extra' | 'dentista';
 
@@ -21,7 +22,7 @@ function period(from: string, to: string): string {
 function openDaysIn(data: AppData, from: IsoDate, to: IsoDate): IsoDate[] {
   const out: IsoDate[] = [];
   if (!isReasonablePeriod(from, to)) return out;
-  for (let d = from; d <= to; d = addDays(d, 1)) if (dataForDate(data, d).openDays.includes(weekdayOf(d))) out.push(d);
+  for (let d = from; d <= to; d = addDays(d, 1)) if (isOpenOn(dataForDate(data, d), d)) out.push(d);
   return out;
 }
 
@@ -49,7 +50,39 @@ export function AbsencesScreen() {
 
   const linkedExtras = (absId: string) => (data.extraShifts ?? []).filter((e) => e.absenceId === absId);
 
+  const today = todayIso();
+  const [ending, setEnding] = useState<{ kind: 'asb'; item: Absence } | { kind: 'dent'; item: DentistAbsence } | null>(null);
+
+  /** Encerra ontem uma ausência que já começou: os dias passados continuam como foram. */
+  const endYesterday = (target: NonNullable<typeof ending>) => {
+    const until = addDays(today, -1);
+    if (target.kind === 'asb') {
+      apply((d) => {
+        d.absences = d.absences.map((x) => (x.id === target.item.id ? { ...x, to: until } : x));
+        d.extraShifts = (d.extraShifts ?? []).filter((e) => !(e.absenceId === target.item.id && e.date >= today));
+      });
+    } else {
+      apply((d) => { d.dentistAbsences = (d.dentistAbsences ?? []).map((x) => (x.id === target.item.id ? { ...x, to: until } : x)); });
+    }
+    setEnding(null);
+  };
+  const deleteAll = (target: NonNullable<typeof ending>) => {
+    if (target.kind === 'asb') {
+      apply((d) => {
+        d.absences = d.absences.filter((x) => x.id !== target.item.id);
+        d.extraShifts = (d.extraShifts ?? []).filter((e) => e.absenceId !== target.item.id);
+      });
+    } else {
+      apply((d) => { d.dentistAbsences = (d.dentistAbsences ?? []).filter((x) => x.id !== target.item.id); });
+    }
+    setEnding(null);
+  };
+
   const removeAbs = async (a: Absence) => {
+    if (a.from < today) {
+      setEnding({ kind: 'asb', item: a });
+      return;
+    }
     const linked = linkedExtras(a.id);
     const ok = await confirm({
       title: 'Remover ausência?',
@@ -72,6 +105,10 @@ export function AbsencesScreen() {
     if (ok) apply((d) => { d.extraShifts = (d.extraShifts ?? []).filter((x) => x.id !== e.id); });
   };
   const removeDent = async (a: DentistAbsence) => {
+    if (a.from < today) {
+      setEnding({ kind: 'dent', item: a });
+      return;
+    }
     const ok = await confirm({ title: 'Remover folga do dentista?', message: <>{dentName(a.dentistId)}, {period(a.from, a.to)}.</>, confirmLabel: 'Remover', danger: true });
     if (ok) apply((d) => { d.dentistAbsences = (d.dentistAbsences ?? []).filter((x) => x.id !== a.id); });
   };
@@ -105,7 +142,7 @@ export function AbsencesScreen() {
           <MonthCalendar ym={ym} data={data} colors={colors} />
           <p className="muted small" style={{ marginTop: 6 }}>
             No calendário: ASB ausente na cor dela, <strong>+ nome</strong> em verde para hora extra, dentista de folga em cinza escuro.
-            Dia com borda vermelha tem sala com dentista e sem ASB: abra o Modo Dia do Quadro nessa data.
+            Dia com borda vermelha tem sala com dentista e sem ASB. Toque num dia para abrir o Quadro nessa data, com horários e motivos.
           </p>
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -130,7 +167,7 @@ export function AbsencesScreen() {
                           {isTeamSubstitute(a) ? asbName(a.substitute.asbId) : isExternalSubstitute(a) ? `${a.substitute.externalName} (externa)` : <span className="muted">sem substituta</span>}
                           {linkedExtras(a.id).length > 0 && <span className="muted small"> (+{linkedExtras(a.id).length} hora{linkedExtras(a.id).length > 1 ? 's' : ''} extra{linkedExtras(a.id).length > 1 ? 's' : ''})</span>}
                         </td>
-                        <td style={{ whiteSpace: 'nowrap' }}>
+                        <td className="actions">
                           <button className="btn sm" onClick={() => setEditAbs(a)}>Editar</button>{' '}
                           <button className="btn sm danger" onClick={() => removeAbs(a)}>Remover</button>
                         </td>
@@ -160,7 +197,7 @@ export function AbsencesScreen() {
                             {e.note ?? ''}
                             {absent && <span className="error small"> {e.note ? '. ' : ''}Não vale: ela está ausente nesse dia ({absent.reason}).</span>}
                           </td>
-                          <td style={{ whiteSpace: 'nowrap' }}>
+                          <td className="actions">
                             <button className="btn sm" onClick={() => setEditExtra(e)}>Editar</button>{' '}
                             <button className="btn sm danger" onClick={() => removeExtra(e)}>Remover</button>
                           </td>
@@ -185,7 +222,7 @@ export function AbsencesScreen() {
                         <td><strong>{dentName(a.dentistId)}</strong></td>
                         <td className="mono" data-label="Período">{period(a.from, a.to)}</td>
                         <td data-label="Motivo">{a.reason}</td>
-                        <td style={{ whiteSpace: 'nowrap' }}>
+                        <td className="actions">
                           <button className="btn sm" onClick={() => setEditDent(a)}>Editar</button>{' '}
                           <button className="btn sm danger" onClick={() => removeDent(a)}>Remover</button>
                         </td>
@@ -247,6 +284,34 @@ export function AbsencesScreen() {
           }}
         />
       )}
+      {ending && (() => {
+        const who = ending.kind === 'asb' ? asbName(ending.item.asbId) : dentName(ending.item.dentistId);
+        const { from, to } = ending.item;
+        const ongoing = to >= today;
+        const linked = ending.kind === 'asb' ? linkedExtras(ending.item.id).length : 0;
+        const choices: Choice[] = [];
+        if (ongoing) {
+          choices.push({
+            label: from === addDays(today, -1) ? `Encerrar em ${formatDate(from)}` : `Encerrar em ${formatDate(addDays(today, -1))}`,
+            hint: `${ending.kind === 'asb' ? 'Ela voltou' : 'Voltou a atender'}: os dias que já passaram continuam registrados; de hoje em diante não vale mais.${linked > 0 ? ' Horas extras dessa cobertura de hoje em diante também saem.' : ''}`,
+            primary: true,
+            onChoose: () => endYesterday(ending),
+          });
+        }
+        choices.push({
+          label: 'Apagar tudo',
+          hint: `Foi cadastrada por engano: some também dos dias que já passaram, que voltam a mostrar a escala sem ela.${linked > 0 ? ` As ${linked} horas extras dessa cobertura também saem.` : ''}`,
+          onChoose: () => deleteAll(ending),
+        });
+        return (
+          <ChoiceDialog
+            title={ending.kind === 'asb' ? 'Remover ausência?' : 'Remover folga do dentista?'}
+            message={`${who}, ${period(from, to)}. ${ongoing ? 'Essa ausência já começou.' : 'Essa ausência já passou.'}`}
+            choices={choices}
+            onClose={() => setEnding(null)}
+          />
+        );
+      })()}
     </div>
   );
 }
@@ -281,12 +346,22 @@ export function MonthCalendar({ ym, data, colors }: { ym: YearMonth; data: AppDa
       {order.map((d) => <div key={d} className="dow">{WEEKDAY_SHORT[d]}</div>)}
       {cells.map((iso) => {
         const inMonth = iso >= first && iso <= last;
-        const closed = !dataForDate(data, iso).openDays.includes(weekdayOf(iso));
+        const closed = !isOpenOn(dataForDate(data, iso), iso);
+        const holiday = (data.closedDates ?? []).find((c) => c.date === iso);
         const problem = inMonth && problems.has(iso);
+        const cls = `day${closed ? ' closed' : ''}${inMonth ? '' : ' other'}${problem ? ' problem' : ''}`;
+        if (!inMonth) return <div key={iso} className={cls}><span className="n">{Number(iso.slice(8))}</span></div>;
+        // Tocar num dia abre o Modo Dia do Quadro nessa data, com tudo o que muda nele.
         return (
-          <div key={iso} className={`day${closed ? ' closed' : ''}${inMonth ? '' : ' other'}${problem ? ' problem' : ''}`} title={problem ? 'Sala com dentista e sem ASB neste dia' : undefined}>
+          <a
+            key={iso}
+            href={`#/quadro/${iso}`}
+            className={cls}
+            title={`${problem ? 'Sala com dentista e sem ASB neste dia. ' : ''}Abrir ${formatDate(iso)} no Quadro`}
+          >
             <span className="n">{Number(iso.slice(8))}</span>
             {problem && <span className="flag" aria-label="sala sem ASB">!</span>}
+            {inMonth && holiday && <span className="abs holiday" title={holiday.note ?? 'Fechado'}>{holiday.note || 'Fechado'}</span>}
             {inMonth && monthAbs.filter((a) => isBetween(iso, a.from, a.to)).map((a) => (
               <span key={a.id} className="abs" style={{ background: colors.get(a.asbId) ?? '#555' }} title={`${asbName(a.asbId)}: ${a.reason}`}>{asbName(a.asbId)}</span>
             ))}
@@ -296,7 +371,7 @@ export function MonthCalendar({ ym, data, colors }: { ym: YearMonth; data: AppDa
             {inMonth && monthDent.filter((a) => isBetween(iso, a.from, a.to)).map((a) => (
               <span key={a.id} className="abs dentist" title={`${dentName(a.dentistId)}: ${a.reason}`}>{dentName(a.dentistId)}</span>
             ))}
-          </div>
+          </a>
         );
       })}
     </div>
@@ -372,6 +447,13 @@ function AbsenceForm({ absence, onClose, onSave }: { absence?: Absence; onClose:
         .filter((x) => x.extra > MAX_EXTRA_PER_DAY)
     : [];
 
+  // Nova ausência: a hora extra vem marcada, a não ser que passe do limite por dia;
+  // aí fica desmarcada e a pessoa decide.
+  const tooLong = longDays.length > 0;
+  useEffect(() => {
+    if (!absence) setCreateExtra(!tooLong);
+  }, [absence, subId, tooLong]);
+
   const submit = () => {
     if (!asbId) return setError('Escolha a ASB.');
     if (!from || !to) return setError('Informe o período.');
@@ -426,7 +508,7 @@ function AbsenceForm({ absence, onClose, onSave }: { absence?: Absence; onClose:
 
       <Field label="Quem cobre">
         <select value={cover} onChange={(e) => setCover(e.target.value as typeof cover)}>
-          <option value="none">Ninguém por enquanto (a sala fica descoberta e gera alerta)</option>
+          <option value="none">Ninguém escolhido (o app usa quem estiver livre no apoio; o que sobrar gera alerta)</option>
           <option value="team">Alguém da equipe</option>
           <option value="external">Pessoa de fora (nome)</option>
         </select>
@@ -476,9 +558,11 @@ function AbsenceForm({ absence, onClose, onSave }: { absence?: Absence; onClose:
           </span>
         </label>
       )}
-      {cover === 'team' && createExtra && longDays.length > 0 && (
+      {cover === 'team' && needed.length > 0 && longDays.length > 0 && (
         <div className="note warn">
-          Jornada longa para {sub?.name}: {longDays.map((x) => `${formatDayMonth(x.date)} das ${formatHour(x.start)} às ${formatHour(x.end)} (${x.extra}h extras)`).join('; ')}. Confira se é permitido.
+          {createExtra ? 'Jornada longa' : `Hora extra não marcada: passaria de ${MAX_EXTRA_PER_DAY}h extras por dia`} para {sub?.name}:{' '}
+          {longDays.map((x) => `${formatDayMonth(x.date)} das ${formatHour(x.start)} às ${formatHour(x.end)} (${x.extra}h extras)`).join('; ')}.
+          {createExtra ? ' Confira se é permitido.' : ' Marque acima se for permitido.'}
         </div>
       )}
       {cover === 'external' && (
@@ -624,14 +708,43 @@ function ExtraForm({ extra, onClose, onSave }: { extra?: ExtraShift; onClose: ()
 
 function DentistAbsenceForm({ absence, onClose, onSave }: { absence?: DentistAbsence; onClose: () => void; onSave: (a: DentistAbsence) => void }) {
   const data = useData();
-  const dentists = [...data.dentists].sort((a, b) => a.name.localeCompare(b.name));
+  // Ao editar a folga de um dentista que já saiu da equipe, ele continua na lista (com o nome de antes).
+  const removed = absence && !data.dentists.some((d) => d.id === absence.dentistId) ? findDentistAnywhere(data, absence.dentistId) : undefined;
+  const dentists = [...data.dentists, ...(removed ? [removed] : [])].sort((a, b) => a.name.localeCompare(b.name));
   const [dentistId, setDentistId] = useState(absence?.dentistId ?? dentists[0]?.id ?? '');
   const [from, setFrom] = useState(absence?.from ?? todayIso());
   const [to, setTo] = useState(absence?.to ?? todayIso());
   const [reason, setReason] = useState<AbsenceReason>(absence?.reason ?? 'Folga');
   const [error, setError] = useState<string | null>(null);
-  const dentist = data.dentists.find((d) => d.id === dentistId);
+  const dentist = dentists.find((d) => d.id === dentistId);
   const roomName = dentist ? data.rooms.find((r) => r.id === dentist.roomId)?.name : '';
+
+  // Prévia: o que acontece nos primeiros dias da folga (quem é remanejada, quem fica disponível).
+  const preview = useMemo(() => {
+    if (!dentist || !isReasonablePeriod(from, to)) return null;
+    const draft: AppData = {
+      ...data,
+      dentistAbsences: [...(data.dentistAbsences ?? []).filter((x) => x.id !== absence?.id), { id: 'previa', dentistId, from, to, reason }],
+    };
+    const days = openDaysIn(draft, from, to).filter((d) => dentistWorksOn(dentist, weekdayOf(d)));
+    const name = (id: string) => findAsbAnywhere(draft, id)?.name ?? '?';
+    const lines = days.slice(0, 5).map((d) => {
+      const day = effectiveDay(draft, d);
+      const moved = analyze(draft, day).filter((a) => a.code === 'remanejada').map((a) => a.message);
+      const free = new Map<string, number[]>();
+      for (const sl of day.slots) {
+        if (sl.kind !== 'sala' || sl.roomId !== dentist.roomId || sl.who.type !== 'asb' || sl.origin === 'auto') continue;
+        if (dentistsAt(day.dentists, dentist.roomId, sl.hour).length > 0) continue;
+        if (!dentistsAt(day.dentistsOff, dentist.roomId, sl.hour).some((x) => x.id === dentist.id)) continue;
+        free.set(sl.who.asbId, [...(free.get(sl.who.asbId) ?? []), sl.hour]);
+      }
+      const freeText = [...free.entries()].map(
+        ([id, hs]) => `${name(id)} fica disponível na ${roomName} ${groupHours(hs).map(([a, b]) => formatRange(a, b)).join(' e ')} (nenhuma sala precisou dela).`,
+      );
+      return { date: d, items: [...moved, ...freeText] };
+    });
+    return { lines, total: days.length };
+  }, [data, dentist, dentistId, from, to, reason, absence?.id, roomName]);
 
   const submit = () => {
     if (!dentistId) return setError('Escolha o dentista.');
@@ -660,8 +773,27 @@ function DentistAbsenceForm({ absence, onClose, onSave }: { absence?: DentistAbs
       {dentist && (
         <p className="muted small">
           Nesses dias a {roomName} fica sem atendimento das {formatRange(dentist.start, dentist.end)}. A ASB que estaria com {dentist.name} fica livre e é
-          remanejada sozinha para outra sala, CME ou almoxarifado que esteja sem ninguém. Confira no Modo Dia do quadro.
+          remanejada sozinha para outra sala, CME ou almoxarifado que esteja sem ninguém.
         </p>
+      )}
+      {preview && (
+        preview.total === 0 ? (
+          <p className="note warn">{dentist?.name} não atende em nenhum dia de funcionamento desse período.</p>
+        ) : (
+          <div className="note">
+            <strong>O que acontece:</strong>
+            <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+              {preview.lines.map((l) => (
+                <li key={l.date}>
+                  {WEEKDAY_SHORT[weekdayOf(l.date)]}, {formatDate(l.date)}: {l.items.length > 0 ? l.items.join(' ') : 'nenhuma mudança nas ASBs.'}
+                </li>
+              ))}
+            </ul>
+            {preview.total > preview.lines.length && (
+              <span className="small muted">E mais {preview.total - preview.lines.length} dia(s). Veja cada um no Modo Dia do Quadro.</span>
+            )}
+          </div>
+        )
       )}
       {error && <p className="error">{error}</p>}
       <div className="modal-actions">

@@ -3,9 +3,9 @@
 import type { AppData, EffectiveDay, Id, IsoDate, Person, Task, TaskMode } from './types';
 import { mod, monthsSince, weekdayOf, weeksOfMonth, weeksSince, type MonthWeek } from './dates';
 import { absenceFor, isExternalSubstitute, isTeamSubstitute } from './absences';
-import { effectiveDay } from './schedule';
+import { effectiveDay, isOpenOn } from './schedule';
 import { dataForDate } from './history';
-import { formatHour, formatRange } from './time';
+import { formatHour, formatRange, groupHours } from './time';
 
 export type RotationAssignment = Extract<TaskMode, { mode: 'rotation' }>;
 
@@ -91,7 +91,7 @@ export function resolveTask(current: AppData, taskNow: Task, date: IsoDate, day?
   const task = data.tasks.find((t) => t.id === taskNow.id) ?? taskNow;
   const weekday = weekdayOf(date);
   const base: TaskResolution = { taskId: task.id, applies: true, holders: [], reason: '' };
-  if (!data.openDays.includes(weekday) || !task.days.includes(weekday)) {
+  if (!isOpenOn(data, date) || !task.days.includes(weekday)) {
     return { ...base, applies: false, reason: 'Não acontece nesse dia.' };
   }
   const a = task.assignment;
@@ -100,23 +100,38 @@ export function resolveTask(current: AppData, taskNow: Task, date: IsoDate, day?
       const dentist = data.dentists.find((d) => d.id === a.dentistId);
       if (!dentist) return { ...base, reason: 'Dentista não encontrado.' };
       const eff = day ?? effectiveDay(data, date);
+      const roomName = data.rooms.find((r) => r.id === dentist.roomId)?.name ?? dentist.roomId;
       if (eff.dentistsOff.some((d) => d.id === dentist.id)) {
-        return { ...base, reason: `${dentist.name} está de folga nesse dia.` };
+        // Folga: a tarefa continua com quem normalmente está com esse dentista, se veio trabalhar.
+        const usual = uniquePersons(
+          data.base.slots
+            .filter((s) => s.kind === 'sala' && s.roomId === dentist.roomId && s.hour >= dentist.start && s.hour < dentist.end)
+            .filter((s) => eff.presentAsbIds.includes(s.asbId))
+            .map((s) => ({ type: 'asb', asbId: s.asbId }) as Person),
+        );
+        return {
+          ...base,
+          holders: usual,
+          reason: usual.length > 0
+            ? `${dentist.name} está de folga; fica com quem normalmente está com ele: ${usual.map((p) => personName(data, p)).join(' e ')}.`
+            : `${dentist.name} está de folga e quem normalmente está com ele também não veio.`,
+        };
       }
       if (!eff.dentists.some((d) => d.id === dentist.id)) {
         return { ...base, reason: `${dentist.name} não atende nesse dia.` };
       }
-      const roomName = data.rooms.find((r) => r.id === dentist.roomId)?.name ?? dentist.roomId;
-      const holders = uniquePersons(
-        eff.slots
-          .filter((s) => s.kind === 'sala' && s.roomId === dentist.roomId && s.hour >= dentist.start && s.hour < dentist.end)
-          .map((s) => s.who),
-      );
-      const who = holders.length > 0 ? holders.map((p) => personName(data, p)).join(' e ') : 'Ninguém';
+      const inRoom = eff.slots.filter((s) => s.kind === 'sala' && s.roomId === dentist.roomId && s.hour >= dentist.start && s.hour < dentist.end);
+      const holders = uniquePersons(inRoom.map((s) => s.who));
+      if (holders.length === 0) return { ...base, holders, reason: `Ninguém na ${roomName} com ${dentist.name} (${formatRange(dentist.start, dentist.end)}).` };
+      // Horas de cada uma na sala, para diferenciar quem fica o turno de quem só cobre um horário.
+      const parts = holders.map((p) => {
+        const hours = inRoom.filter((s) => (p.type === 'asb' ? s.who.type === 'asb' && s.who.asbId === p.asbId : s.who.type === 'external' && s.who.name === p.name)).map((s) => s.hour);
+        return `${personName(data, p)} (${groupHours(hours).map(([a, b]) => formatRange(a, b)).join(', ')})`;
+      });
       return {
         ...base,
         holders,
-        reason: `${who} na ${roomName} com ${dentist.name} (${formatRange(dentist.start, dentist.end)}).`,
+        reason: `Na ${roomName} com ${dentist.name}: ${parts.join(' e ')}.`,
       };
     }
     case 'room': {
@@ -174,20 +189,32 @@ export interface MonthRotation {
   monthTitularId?: Id;
 }
 
-/** Titulares dos rodízios nas semanas do mês (5.4). */
-export function monthRotation(data: AppData, task: Task, year: number, month: number): MonthRotation | undefined {
-  const a = task.assignment;
-  if (a.mode !== 'rotation') return undefined;
+/**
+ * Titulares dos rodízios nas semanas do mês (5.4). Cada semana usa o rodízio como
+ * estava nela (mudar a ordem hoje não reescreve as semanas que já passaram), e
+ * semanas sem nenhum dia da tarefa dentro do mês ficam de fora.
+ */
+export function monthRotation(current: AppData, task: Task, year: number, month: number): MonthRotation | undefined {
+  if (task.assignment.mode !== 'rotation') return undefined;
   const weeks = weeksOfMonth(year, month);
-  if (a.period === 'month') {
+  const asOf = (date: IsoDate) => {
+    const t = dataForDate(current, date).tasks.find((x) => x.id === task.id);
+    return t && t.assignment.mode === 'rotation' ? t.assignment : undefined;
+  };
+  if (task.assignment.period === 'month') {
     const first = weeks[0]?.days[0] ?? `${year}-${String(month).padStart(2, '0')}-01`;
+    const a = asOf(first) ?? task.assignment;
     return { taskId: task.id, period: 'month', weeks: [], monthTitularId: rotationTitular(a, first) };
   }
   const entries: RotationWeekEntry[] = [];
   for (const week of weeks) {
+    const taskDays = week.days.filter((d) => task.days.includes(weekdayOf(d)));
+    if (taskDays.length === 0) continue;
+    const a = asOf(taskDays[0]);
+    if (!a) continue;
     const titularId = rotationTitular(a, week.monday);
     if (!titularId) continue;
-    const absentDays = week.days.filter((d) => task.days.includes(weekdayOf(d)) && absenceFor(data, titularId, d) !== undefined);
+    const absentDays = taskDays.filter((d) => absenceFor(current, titularId, d) !== undefined);
     entries.push({ week, titularId, absentDays });
   }
   return { taskId: task.id, period: 'week', weeks: entries };

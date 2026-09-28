@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import type { Task } from '../../domain';
 import {
   absencesBetween, dataForDate, dentistAbsencesBetween, validExtraShiftsBetween, firstOfMonth, WEEKDAY_SHORT, weekdayOf, formatDate, formatDayMonth, formatMonth, formatRange,
-  isExternalSubstitute, isTeamSubstitute, lastOfMonth, monthRotation, weeksOfMonth,
+  findAsbAnywhere, findDentistAnywhere, isExternalSubstitute, isTeamSubstitute, lastOfMonth, monthRotation, weeksOfMonth,
 } from '../../domain';
 import { useData } from '../../store/useStore';
 import { colorMap } from '../colors';
@@ -17,7 +17,7 @@ export function MonthScreen() {
   // Mês passado: rodízios e nomes como estavam no fim daquele mês.
   const data = useMemo(() => dataForDate(current, lastOfMonth(ym.year, ym.month)), [current, ym]);
   const colors = useMemo(() => colorMap(data.asbs), [data.asbs]);
-  const name = (id: string) => data.asbs.find((a) => a.id === id)?.name ?? '?';
+  const name = (id: string) => findAsbAnywhere(data, id)?.name ?? '?';
   const weeks = weeksOfMonth(ym.year, ym.month);
   const rotations = data.tasks.filter((t): t is Task & { assignment: { mode: 'rotation' } } => t.assignment.mode === 'rotation');
   const weekly = rotations.filter((t) => t.assignment.period === 'week');
@@ -27,7 +27,7 @@ export function MonthScreen() {
   const absences = absencesBetween(data, first, last).sort((a, b) => a.from.localeCompare(b.from));
   const dentAbs = dentistAbsencesBetween(data, first, last).sort((a, b) => a.from.localeCompare(b.from));
   const extras = validExtraShiftsBetween(data, first, last).sort((a, b) => a.date.localeCompare(b.date) || a.start - b.start);
-  const dentName = (id: string) => data.dentists.find((d) => d.id === id)?.name ?? '?';
+  const dentName = (id: string) => findDentistAnywhere(data, id)?.name ?? '?';
 
   return (
     <div className="stack">
@@ -55,7 +55,7 @@ export function MonthScreen() {
               </thead>
               <tbody>
                 {weekly.map((t) => {
-                  const r = monthRotation(data, t, ym.year, ym.month);
+                  const r = monthRotation(current, t, ym.year, ym.month);
                   return (
                     <tr key={t.id}>
                       <td>{t.name}<br /><span className="muted small">{t.when}</span></td>
@@ -90,7 +90,7 @@ export function MonthScreen() {
             <thead><tr><th>Tarefa</th><th>Titular do mês</th></tr></thead>
             <tbody>
               {monthly.map((t) => {
-                const r = monthRotation(data, t, ym.year, ym.month);
+                const r = monthRotation(current, t, ym.year, ym.month);
                 return (
                   <tr key={t.id}>
                     <td>{t.name}</td>

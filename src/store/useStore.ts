@@ -1,9 +1,10 @@
 import { create } from 'zustand';
-import type { AppData, DaySlot, DaySlotKind, Id, IsoDate, Slot, SlotKind } from '../domain';
+import type { Absence, AppData, DaySlot, DaySlotKind, Id, IsoDate, Slot, SlotKind } from '../domain';
 import { addDays, canAssign, nextProteseRecords, recordHistory, todayIso } from '../domain';
 import { loadInitial, seedData, type StorageAdapter } from './storage';
 
-const HISTORY_LIMIT = 100;
+// Passos de desfazer guardados em memória (cada um é uma cópia inteira dos dados).
+const HISTORY_LIMIT = 50;
 export const LAST_BACKUP_KEY = 'escala-ceo:last-backup';
 export const FIRST_CHANGE_KEY = 'escala-ceo:first-change';
 
@@ -24,7 +25,7 @@ interface StoreState {
   /** Data ISO da primeira mudança feita neste navegador (para o lembrete de backup). */
   firstChangeAt: IsoDate | null;
 
-  init(adapter: StorageAdapter): Promise<void>;
+  init(adapter: StorageAdapter, opts?: { blocked?: boolean }): Promise<void>;
   /** Aplica uma mutação com desfazer/refazer e salva. */
   apply(mutator: Mutator): void;
   /** Substitui todos os dados (importar backup, voltar ao seed). */
@@ -39,6 +40,17 @@ interface StoreState {
   flush(): void;
   /** O navegador garantiu armazenamento persistente? null = não suportado ou ainda não pedido. */
   persisted: boolean | null;
+  /** Dados salvos com problema: o app não carrega nada por cima até a pessoa decidir. */
+  recovery: { raw: string; error: string } | null;
+  /** Sai da recuperação usando estes dados (reparados, importados ou a escala inicial), guardando antes uma cópia do que estava salvo. */
+  resolveRecovery(data: AppData): Promise<void>;
+  /** Primeira abertura neste navegador (nada salvo): começou pela escala inicial. */
+  firstUse: boolean;
+  /** O navegador bloqueia o armazenamento: nada fica salvo ao fechar. */
+  storageBlocked: boolean;
+  /** Hora em que esta aba recebeu mudanças feitas em outra aba. */
+  externalUpdateAt: string | null;
+  dismissNotice(which: 'firstUse' | 'externalUpdateAt'): void;
 }
 
 function readKey(key: string): IsoDate | null {
@@ -123,14 +135,36 @@ export const useStore = create<StoreState>((set, get) => {
     lastBackupAt: readKey(LAST_BACKUP_KEY),
     firstChangeAt: readKey(FIRST_CHANGE_KEY),
     persisted: null,
+    recovery: null,
+    firstUse: false,
+    storageBlocked: false,
+    externalUpdateAt: null,
 
-    async init(adapter) {
-      const { data, fromSeed } = await loadInitial(adapter);
+    dismissNotice(which) {
+      set(which === 'firstUse' ? { firstUse: false } : { externalUpdateAt: null });
+    },
+
+    async init(adapter, opts = {}) {
+      set({ storageBlocked: !!opts.blocked });
+      const loaded = await loadInitial(adapter);
+      if (loaded.recovery) {
+        set({ adapter, data: null, loaded: true, recovery: loaded.recovery });
+        return;
+      }
+      const { data, fromSeed } = loaded;
       data.protese = nextProteseRecords(data, todayIso());
       const newSince = !data.historySince;
       if (newSince) data.historySince = todayIso();
-      set({ adapter, data, loaded: true, past: [], future: [] });
+      set({ adapter, data, loaded: true, past: [], future: [], firstUse: fromSeed });
       if (fromSeed || newSince) scheduleSave(data);
+      // Outra aba gravou: esta aba passa a mostrar o que foi gravado, em vez de apagar
+      // aquilo na próxima mudança. O desfazer desta aba é zerado para não voltar por cima.
+      adapter.subscribe?.((external) => {
+        if (saveTimer) clearTimeout(saveTimer);
+        saveTimer = null;
+        pending = null;
+        set({ data: external, past: [], future: [], saving: false, externalUpdateAt: clock() });
+      });
       // Pede ao navegador para não apagar os dados sozinho (quando ele permite).
       try {
         const storage = typeof navigator !== 'undefined' ? navigator.storage : undefined;
@@ -160,6 +194,17 @@ export const useStore = create<StoreState>((set, get) => {
       commit(next, { pushHistory: true });
     },
 
+    async resolveRecovery(data) {
+      const { adapter, recovery } = get();
+      if (!adapter) return;
+      if (recovery) await adapter.keepCopy(recovery.raw);
+      const next = structuredClone(data);
+      next.protese = nextProteseRecords(next, todayIso());
+      if (!next.historySince) next.historySince = todayIso();
+      set({ data: next, recovery: null, past: [], future: [] });
+      await saveNow(next);
+    },
+
     flush() {
       if (!saveTimer || !pending) return;
       clearTimeout(saveTimer);
@@ -169,10 +214,13 @@ export const useStore = create<StoreState>((set, get) => {
       void saveNow(d);
     },
 
+    // Desfazer e refazer contam como mudanças de hoje: o histórico parte do atual, para
+    // um desfazer feito no dia seguinte não apagar como o dia anterior ficou.
     undo() {
       const { past, data, future } = get();
       if (past.length === 0 || !data) return;
-      const prev = past[past.length - 1];
+      const prev = { ...past[past.length - 1], history: data.history, historySince: data.historySince };
+      prev.history = recordHistory(data, prev, todayIso());
       set({ data: prev, past: past.slice(0, -1), future: [data, ...future] });
       scheduleSave(prev);
     },
@@ -180,7 +228,8 @@ export const useStore = create<StoreState>((set, get) => {
     redo() {
       const { past, data, future } = get();
       if (future.length === 0 || !data) return;
-      const next = future[0];
+      const next = { ...future[0], history: data.history, historySince: data.historySince };
+      next.history = recordHistory(data, next, todayIso());
       set({ data: next, past: [...past, data], future: future.slice(1) });
       scheduleSave(next);
     },
@@ -231,7 +280,7 @@ export function setSlots(draft: AppData, asbId: Id, hours: number[], target: Cel
     // aditivo: some o que é igual ao destino, o almoço e o apoio geral; outras salas ficam
     if (s.kind === target.kind && s.roomId === target.roomId) return false;
     const targetIsRoom = target.kind === 'sala' || (target.kind === 'apoio' && !!target.roomId);
-    return targetIsRoom && s.kind === 'sala';
+    return targetIsRoom && s.kind === 'sala' && s.roomId !== target.roomId;
   });
   for (const hour of valid) {
     const slot: Slot = { asbId, hour, kind: target.kind };
@@ -242,19 +291,63 @@ export function setSlots(draft: AppData, asbId: Id, hours: number[], target: Cel
   return valid.length;
 }
 
+/**
+ * Define exatamente onde a ASB fica nessa hora da escala base (lista vazia = livre).
+ * Horas fora do contrato são ignoradas.
+ */
+export function setBaseAt(draft: AppData, asbId: Id, hour: number, entries: CellTarget[]): void {
+  const asb = draft.asbs.find((a) => a.id === asbId);
+  if (!asb || !canAssign(asb, hour)) return;
+  draft.base.slots = draft.base.slots.filter((s) => !(s.asbId === asbId && s.hour === hour));
+  const seen = new Set<string>();
+  for (const e of entries) {
+    const key = `${e.kind}:${e.roomId ?? ''}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const slot: Slot = { asbId, hour, kind: e.kind };
+    if (e.roomId && (e.kind === 'sala' || e.kind === 'apoio')) slot.roomId = e.roomId;
+    draft.base.slots.push(slot);
+  }
+  draft.base.slots.sort((a, b) => a.hour - b.hour || a.asbId.localeCompare(b.asbId));
+}
+
+/** Onde a ASB está nessa hora na escala base. */
+export function baseEntriesAt(data: AppData, asbId: Id, hour: number): CellTarget[] {
+  return data.base.slots.filter((s) => s.asbId === asbId && s.hour === hour).map((s) => ({ kind: s.kind, roomId: s.roomId }));
+}
+
+/**
+ * Registra uma hora extra de um bloco (hour até hour+1) na data. Junta com uma hora
+ * extra da mesma ASB que termine ou comece encostada, para não picar o registro.
+ */
+export function addExtraHour(draft: AppData, asbId: Id, date: IsoDate, hour: number, note = 'Pelo quadro'): void {
+  const list = draft.extraShifts ?? (draft.extraShifts = []);
+  const before = list.find((e) => e.asbId === asbId && e.date === date && e.end === hour);
+  const after = list.find((e) => e.asbId === asbId && e.date === date && e.start === hour + 1);
+  if (before && after && before !== after) {
+    before.end = after.end;
+    draft.extraShifts = list.filter((e) => e !== after);
+  } else if (before) before.end = hour + 1;
+  else if (after) after.start = hour;
+  else list.push({ id: newId('hx'), asbId, date, start: hour, end: hour + 1, note });
+}
+
 // ---- Ajustes de um dia (Modo Dia) ----
 
-/** Define exatamente o que a ASB faz nessas horas nessa data. `entries` vazio = livre. */
-export function setDaySlots(draft: AppData, date: IsoDate, asbId: Id, hours: number[], entries: CellTarget[]): void {
+/**
+ * Define exatamente o que a ASB faz nessas horas nessa data. `entries` vazio = livre.
+ * `hold`: foi tirada à mão de uma cobertura automática; o app não a usa para cobrir nesse horário.
+ */
+export function setDaySlots(draft: AppData, date: IsoDate, asbId: Id, hours: number[], entries: CellTarget[], opts: { hold?: boolean } = {}): void {
   const set = new Set(hours);
   draft.dayOverrides = (draft.dayOverrides ?? []).filter((o) => !(o.date === date && o.asbId === asbId && set.has(o.hour)));
   for (const hour of hours) {
     if (entries.length === 0) {
-      draft.dayOverrides.push({ id: newId('dia'), date, asbId, hour, kind: 'livre' });
+      draft.dayOverrides.push({ id: newId('dia'), date, asbId, hour, kind: 'livre', ...(opts.hold ? { hold: true } : {}) });
       continue;
     }
     for (const e of entries) {
-      const o: DaySlot = { id: newId('dia'), date, asbId, hour, kind: e.kind as DaySlotKind };
+      const o: DaySlot = { id: newId('dia'), date, asbId, hour, kind: e.kind as DaySlotKind, ...(opts.hold ? { hold: true } : {}) };
       if (e.roomId && (e.kind === 'sala' || e.kind === 'apoio')) o.roomId = e.roomId;
       draft.dayOverrides.push(o);
     }
@@ -301,8 +394,17 @@ function keepPast<T extends { from: IsoDate; to: IsoDate }>(list: T[], match: (x
 export function removeAsb(draft: AppData, asbId: Id, today?: IsoDate): void {
   draft.asbs = draft.asbs.filter((a) => a.id !== asbId);
   draft.base.slots = draft.base.slots.filter((s) => s.asbId !== asbId);
-  draft.absences = keepPast(draft.absences, (a) => a.asbId === asbId, today)
-    .map((a) => (a.substitute && 'asbId' in a.substitute && a.substitute.asbId === asbId && !(today && a.to < today) ? { ...a, substitute: undefined } : a));
+  // Ausências em que ela é substituta: o passado continua com ela; de hoje em diante, sem substituta.
+  const absences: Absence[] = [];
+  for (const a of keepPast(draft.absences, (x) => x.asbId === asbId, today)) {
+    const subIsHer = !!a.substitute && 'asbId' in a.substitute && a.substitute.asbId === asbId;
+    if (!subIsHer || (today && a.to < today)) absences.push(a);
+    else if (today && a.from < today) {
+      absences.push({ ...a, to: addDays(today, -1) });
+      absences.push({ ...a, id: newId('abs'), from: today, substitute: undefined });
+    } else absences.push({ ...a, substitute: undefined });
+  }
+  draft.absences = absences;
   draft.tasks = draft.tasks.map((t) => {
     const a = t.assignment;
     if (a.mode === 'rotation') return { ...t, assignment: { ...a, order: a.order.filter((id) => id !== asbId) } };

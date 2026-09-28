@@ -1,9 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import './styles.css';
-import { LocalStorageAdapter } from './store/storage';
+import { browserAdapter } from './store/storage';
 import { useStore } from './store/useStore';
 import { ConfirmProvider } from './ui/common/Modal';
 import { ErrorBoundary } from './ui/common/ErrorBoundary';
+import { RecoveryScreen } from './ui/common/RecoveryScreen';
 import { diffDays, todayIso } from './domain';
 import { ROUTES, href, useHashRoute, type Route } from './ui/router';
 import { Board } from './ui/board/Board';
@@ -24,11 +25,13 @@ const SCREENS: Record<Route, () => ReactNode> = {
 
 export function App() {
   const loaded = useStore((s) => s.loaded);
+  const recovering = useStore((s) => s.recovery !== null);
   const init = useStore((s) => s.init);
   const route = useHashRoute();
 
   useEffect(() => {
-    void init(new LocalStorageAdapter());
+    const { adapter, blocked } = browserAdapter();
+    void init(adapter, { blocked });
   }, [init]);
 
   useEffect(() => {
@@ -69,9 +72,10 @@ export function App() {
         </nav>
         <SaveIndicator />
       </header>
-      {loaded && <BackupReminder />}
+      {loaded && !recovering && <Notices />}
+      {loaded && !recovering && <BackupReminder />}
       <ErrorBoundary>
-        <main className="app-main">{loaded ? SCREENS[route]() : <p className="muted">Carregando...</p>}</main>
+        {recovering ? <RecoveryScreen /> : <main className="app-main">{loaded ? SCREENS[route]() : <p className="muted">Carregando...</p>}</main>}
       </ErrorBoundary>
     </ConfirmProvider>
   );
@@ -81,10 +85,50 @@ function SaveIndicator() {
   const savedAt = useStore((s) => s.savedAt);
   const saving = useStore((s) => s.saving);
   const error = useStore((s) => s.saveError);
+  const blocked = useStore((s) => s.storageBlocked);
+  if (blocked) return <span className="save-indicator error">Não está salvando: armazenamento bloqueado</span>;
   if (error) return <span className="save-indicator error">Erro ao salvar: {error}</span>;
   if (saving) return <span className="save-indicator">Salvando...</span>;
   if (savedAt) return <span className="save-indicator">Salvo às {savedAt}</span>;
   return <span className="save-indicator">Salvamento automático ativo</span>;
+}
+
+/** Avisos de primeira abertura, armazenamento bloqueado e mudança vinda de outra aba. */
+function Notices() {
+  const firstUse = useStore((s) => s.firstUse);
+  const blocked = useStore((s) => s.storageBlocked);
+  const external = useStore((s) => s.externalUpdateAt);
+  const dismiss = useStore((s) => s.dismissNotice);
+  return (
+    <>
+      {blocked && (
+        <div className="backup-bar bad" role="alert">
+          <span>
+            O navegador está bloqueando o armazenamento deste site: o que for feito aqui some ao fechar a página.
+            Libere os dados do site nas configurações do navegador (ou saia da janela anônima) e, antes de fechar, exporte um backup em Ajustes.
+          </span>
+        </div>
+      )}
+      {firstUse && !blocked && (
+        <div className="backup-bar" role="status">
+          <span>
+            Nenhuma escala salva neste navegador: o app começou pela escala inicial dos documentos.
+            Se você já usava o app em outro aparelho ou navegador, importe o backup em Ajustes.
+          </span>
+          <span className="spacer" />
+          <a className="btn sm" href={href('ajustes')}>Importar backup</a>
+          <button className="btn sm icon" onClick={() => dismiss('firstUse')} aria-label="Fechar aviso">×</button>
+        </div>
+      )}
+      {external && (
+        <div className="backup-bar" role="status">
+          <span>Às {external}, a escala foi alterada em outra aba ou janela. Esta tela já mostra a versão nova.</span>
+          <span className="spacer" />
+          <button className="btn sm icon" onClick={() => dismiss('externalUpdateAt')} aria-label="Fechar aviso">×</button>
+        </div>
+      )}
+    </>
+  );
 }
 
 const BACKUP_REMINDER_DAYS = 7;
@@ -104,7 +148,7 @@ function BackupReminder() {
     <div className="backup-bar" role="status">
       <span>
         {lastBackupAt ? `Faz ${days} dias que você não exporta um backup.` : `Você mexe na escala há ${days} dias e ainda não exportou um backup.`}{' '}
-        Os dados ficam só neste computador.
+        Os dados ficam só neste aparelho, neste navegador.
       </span>
       <span className="spacer" />
       <a className="btn sm" href={href('ajustes')}>Exportar agora</a>

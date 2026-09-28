@@ -13,6 +13,7 @@ import type {
   IsoDate,
   Person,
   Slot,
+  SlotOrigin,
   UncoveredSlot,
 } from './types';
 import { HOURS, SLOT_KIND_LABEL } from './types';
@@ -22,6 +23,11 @@ import { formatHour, formatRange, groupHours, hoursBetween } from './time';
 import { dataForDate } from './history';
 
 const DEFAULT_DAYS = [1, 2, 3, 4, 5];
+
+/** O CEO abre nessa data? (dia da semana de funcionamento e não é feriado/data fechada) */
+export function isOpenOn(data: Pick<AppData, 'openDays' | 'closedDates'>, date: IsoDate): boolean {
+  return data.openDays.includes(weekdayOf(date)) && !(data.closedDates ?? []).some((c) => c.date === date);
+}
 
 /** Dentista atende nesse dia da semana? Lista vazia ou ausente = segunda a sexta. */
 export function dentistWorksOn(d: Dentist, weekday: number): boolean {
@@ -86,7 +92,9 @@ export function effectiveDay(current: AppData, date: IsoDate): EffectiveDay {
   // Dia passado: usa a estrutura (salas, dentistas, ASBs, escala base) como era nesse dia.
   const data = dataForDate(current, date);
   const weekday = weekdayOf(date);
-  const open = data.openDays.includes(weekday);
+  const open = isOpenOn(data, date);
+  const closedDate = (data.closedDates ?? []).find((c) => c.date === date);
+  const closedNote = closedDate ? closedDate.note?.trim() || 'Feriado ou dia fechado' : undefined;
   const activeIds = new Set(data.asbs.filter((a) => a.active).map((a) => a.id));
   const asbById = new Map(data.asbs.map((a) => [a.id, a]));
   // Uma ausência por ASB no dia: se houver sobreposição, vale a primeira cadastrada.
@@ -103,16 +111,27 @@ export function effectiveDay(current: AppData, date: IsoDate): EffectiveDay {
   const dentistsOff = scheduled.filter((d) => offIds.has(d.id));
   const isExtra = (asbId: Id, hour: number) => inExtraShift(extraShifts, asbId, hour);
 
-  // 1. Base, só de ASBs ativas e presentes.
-  let slots: EffectiveSlot[] = data.base.slots
-    .filter((s) => activeIds.has(s.asbId) && !absentIds.has(s.asbId))
-    .map((s) => ({
-      hour: s.hour,
-      kind: s.kind,
-      roomId: s.roomId,
-      who: { type: 'asb', asbId: s.asbId },
-      origin: 'base',
-    }));
+  // 1. O que cada ASB faria no dia: escala base com os ajustes do dia por cima.
+  //    Vale também para quem está ausente (a substituta cobre o que foi combinado para o dia).
+  const overrides = (data.dayOverrides ?? []).filter((o) => o.date === date && activeIds.has(o.asbId));
+  const key = (asbId: Id, hour: number) => `${asbId}@${hour}`;
+  const overriddenKeys = new Set(overrides.map((o) => key(o.asbId, o.hour)));
+  const holdKeys = new Set(overrides.filter((o) => o.hold).map((o) => key(o.asbId, o.hour)));
+  const placedKeys = new Set(overrides.filter((o) => o.kind !== 'livre').map((o) => key(o.asbId, o.hour)));
+  const planned: Array<Slot & { origin: SlotOrigin }> = [];
+  for (const s of data.base.slots) {
+    if (!activeIds.has(s.asbId) || overriddenKeys.has(key(s.asbId, s.hour))) continue;
+    planned.push({ ...s, origin: 'base' });
+  }
+  for (const o of overrides) {
+    if (o.kind === 'livre') continue;
+    const asb = asbById.get(o.asbId);
+    if (!asb || !canAssignOn(asb, o.hour, absentIds.has(o.asbId) ? [] : extraShifts)) continue;
+    planned.push({ asbId: o.asbId, hour: o.hour, kind: o.kind, roomId: o.roomId, origin: 'override' });
+  }
+  let slots: EffectiveSlot[] = planned
+    .filter((s) => !absentIds.has(s.asbId))
+    .map((s) => ({ hour: s.hour, kind: s.kind, roomId: s.roomId, who: { type: 'asb', asbId: s.asbId }, origin: s.origin }));
 
   const uncovered: UncoveredSlot[] = [];
 
@@ -124,7 +143,7 @@ export function effectiveDay(current: AppData, date: IsoDate): EffectiveDay {
 
   // 2. Substituições, na ordem das ausências.
   for (const absence of absences) {
-    const absentSlots = data.base.slots.filter((s) => s.asbId === absence.asbId);
+    const absentSlots: Slot[] = planned.filter((s) => s.asbId === absence.asbId).map(({ origin: _o, ...s }) => s);
     if (isExternalSubstitute(absence)) {
       for (const s of absentSlots) {
         slots.push({
@@ -146,15 +165,22 @@ export function effectiveDay(current: AppData, date: IsoDate): EffectiveDay {
     }
     const subId = absence.substitute.asbId;
     const sub = asbById.get(subId);
-    const subAvailable = sub !== undefined && sub.active && !absentIds.has(subId);
     for (const s of absentSlots) {
       if (!needsCoverNow(s)) continue; // almoço, apoio ou sala sem dentista: nada a cobrir
-      if (!subAvailable) {
+      if (!sub || !sub.active) {
+        uncovered.push({ slot: s, absenceId: absence.id, reason: 'substituta-inativa', substituteId: subId });
+        continue;
+      }
+      if (absentIds.has(subId)) {
         uncovered.push({ slot: s, absenceId: absence.id, reason: 'substituta-ausente', substituteId: subId });
         continue;
       }
       if (!canAssignOn(sub, s.hour, extraShifts)) {
         uncovered.push({ slot: s, absenceId: absence.id, reason: 'substituta-fora-do-contrato', substituteId: subId });
+        continue;
+      }
+      if (holdKeys.has(key(subId, s.hour))) {
+        uncovered.push({ slot: s, absenceId: absence.id, reason: 'substituta-retirada', substituteId: subId });
         continue;
       }
       const mine = slots.filter((e) => e.hour === s.hour && e.who.type === 'asb' && e.who.asbId === subId);
@@ -176,30 +202,23 @@ export function effectiveDay(current: AppData, date: IsoDate): EffectiveDay {
     }
   }
 
-  // 3. Ajustes do dia: substituem o que a ASB faria naquela hora.
-  const overrides = (data.dayOverrides ?? []).filter((o) => o.date === date && activeIds.has(o.asbId) && !absentIds.has(o.asbId));
-  const overriddenKeys = new Set(overrides.map((o) => `${o.asbId}@${o.hour}`));
-  slots = slots.filter((e) => !(e.who.type === 'asb' && overriddenKeys.has(`${e.who.asbId}@${e.hour}`)));
-  for (const o of overrides) {
-    if (o.kind === 'livre') continue;
-    const asb = asbById.get(o.asbId);
-    if (!asb || !canAssignOn(asb, o.hour, extraShifts)) continue;
-    slots.push({ hour: o.hour, kind: o.kind, roomId: o.roomId, who: { type: 'asb', asbId: o.asbId }, origin: 'override' });
-  }
-
-  // 4. Remanejamento automático. Recebe quem está livre: a ASB de um dentista de folga
-  //    (prioridade 1) ou alguém de hora extra sem atribuição (prioridade 2). Quem foi
-  //    ajustado à mão naquele horário não é mexido.
+  // 3. Remanejamento automático. Recebe quem está livre: a ASB de um dentista de folga
+  //    (prioridade 1), alguém de hora extra sem atribuição (2) e, só para cobrir quem
+  //    faltou, quem está no apoio geral (3). Quem foi ajustado à mão naquele horário
+  //    não é mexido. Entre iguais, prefere quem já estava ali na hora anterior.
   const presentAsbs = data.asbs.filter((a) => a.active && !absentIds.has(a.id)).sort((a, b) => a.name.localeCompare(b.name));
   const roomsInOrder = [...data.rooms].sort((a, b) => a.order - b.order);
-  const pickFree = (hour: number): { asb: Asb; priority: number; from?: Id } | undefined => {
-    let best: { asb: Asb; priority: number; from?: Id } | undefined;
+  type Target = { kind: Slot['kind']; roomId?: Id };
+  type Candidate = { asb: Asb; priority: number; from?: Id; fromKind?: Slot['kind']; stays: boolean };
+  const pickFree = (hour: number, allowApoio: boolean, same: (e: EffectiveSlot) => boolean): Candidate | undefined => {
+    let best: Candidate | undefined;
     for (const asb of presentAsbs) {
       if (!canAssignOn(asb, hour, extraShifts)) continue;
-      if (overriddenKeys.has(`${asb.id}@${hour}`)) continue;
+      if (holdKeys.has(key(asb.id, hour)) || placedKeys.has(key(asb.id, hour))) continue;
       const mine = slots.filter((e) => e.hour === hour && e.who.type === 'asb' && e.who.asbId === asb.id);
       let priority: number | undefined;
       let from: Id | undefined;
+      let fromKind: Slot['kind'] | undefined;
       if (mine.length === 0 && isExtra(asb.id, hour)) priority = 2;
       else if (
         mine.length > 0 &&
@@ -207,40 +226,63 @@ export function effectiveDay(current: AppData, date: IsoDate): EffectiveDay {
       ) {
         priority = 1;
         from = mine[0].roomId;
+      } else if (allowApoio && mine.length > 0 && mine.every((e) => (e.kind === 'apoio' && !e.roomId) || e.kind === 'recepcao')) {
+        priority = 3;
+        fromKind = mine[0].kind;
       }
-      if (priority !== undefined && (!best || priority < best.priority)) best = { asb, priority, from };
+      if (priority === undefined) continue;
+      const stays = slots.some((e) => e.hour === hour - 1 && e.origin === 'auto' && e.who.type === 'asb' && e.who.asbId === asb.id && same(e));
+      if (!best || priority < best.priority || (priority === best.priority && stays && !best.stays)) best = { asb, priority, from, fromKind, stays };
     }
     return best;
   };
+  const place = (hour: number, best: Candidate, slot: Target & { coveringFor?: Id }) => {
+    slots = slots.filter((e) => !(e.hour === hour && e.who.type === 'asb' && e.who.asbId === best.asb.id));
+    slots.push({ hour, ...slot, who: { type: 'asb', asbId: best.asb.id }, origin: 'auto', movedFrom: best.from, movedFromKind: best.fromKind });
+  };
   for (const hour of HOURS) {
-    for (const room of roomsInOrder) {
+    // Continuidade: primeiro as salas que já receberam alguém do app na hora anterior.
+    const hadAuto = (roomId: Id) => slots.some((e) => e.hour === hour - 1 && e.origin === 'auto' && e.kind === 'sala' && e.roomId === roomId);
+    const roomsThisHour = [...roomsInOrder].sort((a, b) => Number(hadAuto(b.id)) - Number(hadAuto(a.id)));
+    for (const room of roomsThisHour) {
       if (!roomActive(room.id, hour)) continue;
       if (slots.some((e) => e.kind === 'sala' && e.roomId === room.id && e.hour === hour)) continue;
-      const best = pickFree(hour);
+      const gap = uncovered.find((u) => u.slot.kind === 'sala' && u.slot.roomId === room.id && u.slot.hour === hour);
+      const best = pickFree(hour, !!gap, (e) => e.kind === 'sala' && e.roomId === room.id);
       if (!best) continue;
-      slots = slots.filter((e) => !(e.hour === hour && e.who.type === 'asb' && e.who.asbId === best.asb.id));
-      slots.push({ hour, kind: 'sala', roomId: room.id, who: { type: 'asb', asbId: best.asb.id }, origin: 'auto', movedFrom: best.from });
+      place(hour, best, { kind: 'sala', roomId: room.id, coveringFor: gap?.slot.asbId });
     }
     // CME e almoxarifado de quem faltou também recebem quem está livre.
     for (const u of uncovered) {
       if (u.slot.hour !== hour || (u.slot.kind !== 'cme' && u.slot.kind !== 'almox')) continue;
-      if (slots.some((e) => e.hour === hour && e.coveringFor === u.slot.asbId && e.kind === u.slot.kind)) continue;
-      const best = pickFree(hour);
+      if (slots.some((e) => e.hour === hour && e.kind === u.slot.kind && (e.coveringFor === u.slot.asbId || e.origin === 'override'))) continue;
+      const best = pickFree(hour, true, (e) => e.kind === u.slot.kind);
       if (!best) continue;
-      slots = slots.filter((e) => !(e.hour === hour && e.who.type === 'asb' && e.who.asbId === best.asb.id));
-      slots.push({ hour, kind: u.slot.kind, who: { type: 'asb', asbId: best.asb.id }, origin: 'auto', movedFrom: best.from, coveringFor: u.slot.asbId });
+      place(hour, best, { kind: u.slot.kind, coveringFor: u.slot.asbId });
     }
   }
 
+  // "Hora extra" só nos blocos fora do contrato.
   for (const e of slots) {
-    if (e.who.type === 'asb' && isExtra(e.who.asbId, e.hour)) e.extra = true;
+    if (e.who.type !== 'asb') continue;
+    const asb = asbById.get(e.who.asbId);
+    if (asb && isExtra(asb.id, e.hour) && !canAssign(asb, e.hour)) e.extra = true;
   }
   slots.sort((a, b) => a.hour - b.hour);
+
+  if (!open) {
+    // CEO fechado: ninguém escalado. Os ajustes continuam listados para poderem ser limpos.
+    return {
+      date, weekday, open, closedNote, slots: [], absences, uncovered: [], presentAsbIds: [], dentists: [], dentistsOff: [],
+      dentistAbsences, extraShifts: [], overrides,
+    };
+  }
 
   return {
     date,
     weekday,
     open,
+    closedNote,
     slots,
     absences,
     uncovered,
@@ -301,11 +343,11 @@ export function analyze(current: AppData, day: EffectiveDay): Alert[] {
     });
   }
   const autos = day.slots.filter((s) => s.origin === 'auto' && s.who.type === 'asb');
-  const autoGroups = new Map<string, { asbId: Id; kind: Slot['kind']; roomId?: Id; from?: Id; covering?: Id; hours: number[] }>();
+  const autoGroups = new Map<string, { asbId: Id; kind: Slot['kind']; roomId?: Id; from?: Id; fromKind?: Slot['kind']; covering?: Id; hours: number[] }>();
   for (const s of autos) {
     if (s.who.type !== 'asb') continue;
-    const k = `${s.who.asbId}|${s.kind}|${s.roomId}|${s.movedFrom ?? ''}|${s.coveringFor ?? ''}`;
-    const g = autoGroups.get(k) ?? { asbId: s.who.asbId, kind: s.kind, roomId: s.roomId, from: s.movedFrom, covering: s.coveringFor, hours: [] };
+    const k = `${s.who.asbId}|${s.kind}|${s.roomId}|${s.movedFrom ?? ''}|${s.movedFromKind ?? ''}|${s.coveringFor ?? ''}`;
+    const g = autoGroups.get(k) ?? { asbId: s.who.asbId, kind: s.kind, roomId: s.roomId, from: s.movedFrom, fromKind: s.movedFromKind, covering: s.coveringFor, hours: [] };
     g.hours.push(s.hour);
     autoGroups.set(k, g);
   }
@@ -319,7 +361,9 @@ export function analyze(current: AppData, day: EffectiveDay): Alert[] {
         code: 'remanejada',
         message: g.from
           ? `${name} remanejada da ${roomName(g.from)} para ${g.kind === 'sala' ? 'a ' + roomName(g.roomId ?? '') : 'o ' + SLOT_KIND_LABEL[g.kind]} (${formatRange(a, b)})${covering}.`
-          : `${name} (hora extra) colocada ${where} (${formatRange(a, b)})${covering}.`,
+          : g.fromKind
+            ? `${name} saiu do ${SLOT_KIND_LABEL[g.fromKind]} para ${g.kind === 'sala' ? 'a ' + roomName(g.roomId ?? '') : 'o ' + SLOT_KIND_LABEL[g.kind]} (${formatRange(a, b)})${covering}.`
+            : `${name} (hora extra) colocada ${where} (${formatRange(a, b)})${covering}.`,
         hour: a,
         roomId: g.roomId,
         asbId: g.asbId,
@@ -393,18 +437,18 @@ export function analyze(current: AppData, day: EffectiveDay): Alert[] {
         });
       }
     }
-    for (const e of day.extraShifts.filter((x) => x.asbId === asbId)) {
-      for (const hour of hoursBetween(e.start, e.end)) {
-        if (!HOURS.includes(hour) || canAssign(asb, hour)) continue;
-        if (!mine.some((s) => s.hour === hour)) {
-          alerts.push({
-            level: 'aviso',
-            code: 'hora-extra-sem-atribuicao',
-            message: `${asb.name} tem hora extra às ${formatHour(hour)} e nenhuma atribuição nesse bloco.`,
-            hour,
-            asbId,
-          });
-        }
+    // Um aviso por bloco, mesmo com registros de hora extra sobrepostos.
+    const extraHours = new Set(day.extraShifts.filter((x) => x.asbId === asbId).flatMap((e) => hoursBetween(e.start, e.end)));
+    for (const hour of [...extraHours].sort((x, y) => x - y)) {
+      if (!HOURS.includes(hour) || canAssign(asb, hour)) continue;
+      if (!mine.some((s) => s.hour === hour)) {
+        alerts.push({
+          level: 'aviso',
+          code: 'hora-extra-sem-atribuicao',
+          message: `${asb.name} tem hora extra às ${formatHour(hour)} e nenhuma atribuição nesse bloco.`,
+          hour,
+          asbId,
+        });
       }
     }
     for (const hour of HOURS) {
@@ -417,6 +461,7 @@ export function analyze(current: AppData, day: EffectiveDay): Alert[] {
           message: `${asb.name} cobre ${rooms.map(roomName).join(' e ')} ao mesmo tempo às ${formatHour(hour)}.`,
           hour,
           asbId,
+          roomIds: rooms,
         });
       }
     }

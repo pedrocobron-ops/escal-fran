@@ -112,9 +112,14 @@ describe('escala efetiva com ausências', () => {
     expect(day.presentAsbIds).not.toContain(ID.laura);
     expect(day.absences).toHaveLength(1);
     const alerts = analyze(d, day);
-    // Sala 1: Francisco 08h–11h e Priscila 11h–15h (Andrea cobre às 12h)
-    expect(byCode(alerts, 'sala-sem-asb').filter((a) => a.roomId === 's1').map((a) => a.hour)).toEqual([8, 9, 10, 11, 13, 14]);
-    expect(byCode(alerts, 'ausente-sem-substituta').map((a) => a.hour)).toEqual([7, 8, 9, 10, 11, 13, 14]);
+    // Sala 1: Andrea cobre às 12h; quem está no apoio geral cobre 10h, 11h, 13h e 14h; 08h e 09h ninguém está livre
+    expect(byCode(alerts, 'sala-sem-asb').filter((a) => a.roomId === 's1').map((a) => a.hour)).toEqual([8, 9]);
+    expect(byCode(alerts, 'ausente-sem-substituta').map((a) => a.hour)).toEqual([7, 8, 9]);
+    expect(byCode(alerts, 'remanejada').map((a) => a.message)).toEqual([
+      'Ana saiu do Apoio / Recepção para a Sala 1 (10h–11h), cobrindo Laura.',
+      'Amanda saiu do Apoio / Recepção para a Sala 1 (11h–12h), cobrindo Laura.',
+      'Amanda saiu do Apoio / Recepção para a Sala 1 (13h–15h), cobrindo Laura.',
+    ]);
     // Laura ausente não gera "sem almoço" nem "bloco sem atribuição"
     expect(byCode(alerts, 'sem-almoco')).toEqual([]);
     expect(byCode(alerts, 'bloco-sem-atribuicao')).toEqual([]);
@@ -149,12 +154,12 @@ describe('escala efetiva com ausências', () => {
 
     const alerts = analyze(d, day);
     const choque = byCode(alerts, 'substituta-choque');
-    expect(choque.map((a) => a.hour)).toEqual([7, 8, 9, 10]);
+    expect(choque.map((a) => a.hour)).toEqual([7, 8, 9]); // às 10h a Ana sai do apoio e cobre
     expect(choque.every((a) => a.level === 'aviso' && a.asbId === ID.amanda)).toBe(true);
     expect(choque[2].message).toContain('Amanda');
     expect(choque[2].message).toContain('Laura');
-    // Sala 1 às 08h, 09h e 10h fica sem ASB (Francisco atende); 07h não tem dentista
-    expect(byCode(alerts, 'sala-sem-asb').filter((a) => a.roomId === 's1').map((a) => a.hour)).toEqual([8, 9, 10]);
+    // Sala 1 às 08h e 09h fica sem ASB (Francisco atende); 07h não tem dentista; 10h a Ana cobre
+    expect(byCode(alerts, 'sala-sem-asb').filter((a) => a.roomId === 's1').map((a) => a.hour)).toEqual([8, 9]);
     // Amanda continua com almoço e sem buracos no contrato
     expect(byCode(alerts, 'sem-almoco')).toEqual([]);
     expect(byCode(alerts, 'bloco-sem-atribuicao')).toEqual([]);
@@ -168,8 +173,10 @@ describe('escala efetiva com ausências', () => {
     const reasons = Object.fromEntries(day.uncovered.map((u) => [u.slot.hour, u.busyWith ?? u.reason]));
     expect(reasons).toEqual({ 7: 'sala', 8: 'sala', 9: 'sala', 10: 'sala', 11: 'almoco', 13: 'sala', 14: 'sala' });
     const alerts = analyze(d, day);
-    expect(byCode(alerts, 'substituta-choque').find((a) => a.hour === 11)?.message).toContain('almoço');
     expect(byCode(alerts, 'substituta-choque').find((a) => a.hour === 8)?.message).toContain('outra sala');
+    // às 11h ela almoça, mas a Amanda sai do apoio e cobre: o choque não fica pendente
+    expect(byCode(alerts, 'substituta-choque').find((a) => a.hour === 11)).toBeUndefined();
+    expect(byCode(alerts, 'remanejada').some((a) => a.hour === 11 && a.message.startsWith('Amanda saiu do Apoio'))).toBe(true);
     // Pâmela não perdeu nenhum slot dela
     expect(day.slots.filter((s) => s.who.type === 'asb' && s.who.asbId === ID.pamela)).toHaveLength(9);
   });

@@ -16,7 +16,7 @@ describe('sala sem dentista atendendo não precisa de cobertura', () => {
     d.absences.push(absence({ asbId: ID.laura, from: DAY, to: DAY }));
     const alerts = analyze(d, effectiveDay(d, DAY));
     const aus = alerts.filter((a) => a.code === 'ausente-sem-substituta').map((a) => a.hour);
-    expect(aus).toEqual([7, 11, 13, 14]); // 08h–10h (Sala 1 de folga) não aparecem
+    expect(aus).toEqual([7]); // 08h–10h (Sala 1 de folga) não contam; 11h, 13h e 14h o apoio cobre
     const s = coverageSuggestions(d, ID.laura, DAY, DAY);
     expect(s[0].total).toBe(4);
     expect(extraNeededToCover(d, ID.laura, ID.nicelia, DAY, DAY)).toEqual([
@@ -35,9 +35,10 @@ describe('ASB livre por folga do dentista é boa substituta', () => {
     expect(pam.covered).toBe(4); // 07h CME, 08h–10h Sala 1
     expect(who(d, ID.pamela, 7)).toEqual([expect.objectContaining({ kind: 'cme', origin: 'substitute', coveringFor: ID.laura, movedFrom: 's4' })]);
     expect(who(d, ID.pamela, 9)).toEqual([expect.objectContaining({ kind: 'sala', roomId: 's1', origin: 'substitute' })]);
-    // choques só onde ela realmente está ocupada: almoço às 11h, Sala 4 com Dr. Marco às 13h e 14h
-    const choque = analyze(d, effectiveDay(d, DAY)).filter((a) => a.code === 'substituta-choque').map((a) => a.hour);
-    expect(choque).toEqual([11, 13, 14]);
+    // Onde ela está ocupada (almoço às 11h, Sala 4 com Dr. Marco às 13h e 14h), o apoio cobre: sem choque pendente
+    const alerts = analyze(d, effectiveDay(d, DAY));
+    expect(alerts.filter((a) => a.code === 'substituta-choque')).toEqual([]);
+    expect(alerts.filter((a) => a.code === 'sala-sem-asb' && a.roomId === 's1')).toEqual([]);
   });
 });
 
@@ -46,7 +47,7 @@ describe('ajuste manual vence o remanejamento automático', () => {
     const d = seed();
     d.extraShifts = [{ id: 'hx', asbId: ID.amanda, date: DAY, start: 18, end: 19 }];
     expect(who(d, ID.amanda, 18)).toEqual([expect.objectContaining({ roomId: 's2', origin: 'auto' })]);
-    setDaySlots(d, DAY, ID.amanda, [18], []); // "livre"
+    setDaySlots(d, DAY, ID.amanda, [18], [], { hold: true }); // tirada à mão de uma cobertura automática
     expect(who(d, ID.amanda, 18)).toEqual([]);
     const alerts = analyze(d, effectiveDay(d, DAY));
     expect(alerts.some((a) => a.code === 'sala-sem-asb' && a.roomId === 's2' && a.hour === 18)).toBe(true);
@@ -61,10 +62,11 @@ describe('hora extra também cobre CME e almoxarifado de quem faltou', () => {
     expect(who(d, ID.amanda, 7)).toEqual([expect.objectContaining({ kind: 'cme', origin: 'auto', coveringFor: ID.laura })]);
     expect(who(d, ID.amanda, 8)).toEqual([expect.objectContaining({ kind: 'sala', roomId: 's1', origin: 'auto' })]);
     const alerts = analyze(d, effectiveDay(d, DAY));
-    expect(alerts.filter((a) => a.code === 'ausente-sem-substituta').map((a) => a.hour)).toEqual([9, 10, 11, 13, 14]);
+    // 10h, 11h, 13h e 14h: quem está no apoio cobre; às 09h ninguém está livre
+    expect(alerts.filter((a) => a.code === 'ausente-sem-substituta').map((a) => a.hour)).toEqual([9]);
     expect(alerts.filter((a) => a.code === 'hora-extra-sem-atribuicao')).toEqual([]);
     expect(alerts.find((a) => a.code === 'remanejada' && a.hour === 7)?.message).toBe('Amanda (hora extra) colocada no CME / Arsenal (07h–08h), cobrindo Laura.');
-    expect(stillUncovered(d, ID.laura, DAY, DAY)).toEqual([{ date: DAY, hours: [9, 10, 11, 13, 14] }]);
+    expect(stillUncovered(d, ID.laura, DAY, DAY)).toEqual([{ date: DAY, hours: [9] }]);
   });
 });
 

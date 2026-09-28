@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { MONTH_LABEL } from '../../domain';
 
 export interface YearMonth {
@@ -15,6 +16,8 @@ export function shiftMonth(ym: YearMonth, delta: number): YearMonth {
 }
 
 export function MonthPicker({ value, onChange }: { value: YearMonth; onChange: (ym: YearMonth) => void }) {
+  const [yearText, setYearText] = useState(String(value.year));
+  useEffect(() => setYearText(String(value.year)), [value.year]);
   return (
     <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
       <button className="btn icon" onClick={() => onChange(shiftMonth(value, -1))} aria-label="Mês anterior">‹</button>
@@ -23,7 +26,7 @@ export function MonthPicker({ value, onChange }: { value: YearMonth; onChange: (
           <option key={m} value={i + 1}>{m}</option>
         ))}
       </select>
-      <input type="number" value={value.year} min={2020} max={2100} style={{ width: 80 }} onChange={(e) => onChange({ ...value, year: Number(e.target.value) || value.year })} aria-label="Ano" />
+      <input type="number" value={yearText} min={2020} max={2100} style={{ width: 80 }} onChange={(e) => { setYearText(e.target.value); const y = Number(e.target.value); if (y >= 2000 && y <= 2100) onChange({ ...value, year: y }); }} onBlur={() => setYearText(String(value.year))} aria-label="Ano" />
       <button className="btn icon" onClick={() => onChange(shiftMonth(value, 1))} aria-label="Próximo mês">›</button>
     </div>
   );

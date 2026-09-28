@@ -1,9 +1,9 @@
 // Sugestão de cobertura: quem pode cobrir uma ASB ausente num período.
 
 import type { AppData, EffectiveDay, EffectiveSlot, Id, IsoDate, Slot } from './types';
-import { addDays, diffDays, parseIso, weekdayOf } from './dates';
+import { addDays, diffDays, parseIso } from './dates';
 import { absenceFor } from './absences';
-import { canAssignOn, dentistsAt, effectiveDay } from './schedule';
+import { canAssignOn, dentistsAt, effectiveDay, isOpenOn } from './schedule';
 import { dataForDate } from './history';
 
 /** Limite de dias analisados de uma vez (evita travar com datas digitadas pela metade). */
@@ -57,7 +57,7 @@ export function coverageSuggestions(data: AppData, absentId: Id, from: IsoDate, 
   const stats = new Map<Id, CoverSuggestion>(candidates.map((a) => [a.id, { asbId: a.id, name: a.name, covered: 0, total: 0, needsExtra: 0 }]));
   for (let date = from; date <= to; date = addDays(date, 1)) {
     const dated = dataForDate(scoped, date);
-    if (!dated.openDays.includes(weekdayOf(date))) continue;
+    if (!isOpenOn(dated, date)) continue;
     const day = effectiveDay(scoped, date);
     const toCover = slotsToCover(dated, day, absentId);
     for (const c of candidates) {
@@ -106,7 +106,7 @@ export function extraNeededToCover(
   const out: ExtraNeed[] = [];
   for (let date = from; date <= to; date = addDays(date, 1)) {
     const dated = dataForDate(scoped, date);
-    if (!dated.openDays.includes(weekdayOf(date))) continue;
+    if (!isOpenOn(dated, date)) continue;
     if (absenceFor(scoped, subId, date)) continue;
     const day = effectiveDay(scoped, date);
     const hours = [...new Set(slotsToCover(dated, day, absentId).map((s) => s.hour))]
@@ -128,7 +128,7 @@ export function stillUncovered(data: AppData, absentId: Id, from: IsoDate, to: I
   const out: Array<{ date: IsoDate; hours: number[] }> = [];
   for (let date = from; date <= to; date = addDays(date, 1)) {
     const dated = dataForDate(data, date);
-    if (!dated.openDays.includes(weekdayOf(date))) continue;
+    if (!isOpenOn(dated, date)) continue;
     const day = effectiveDay(data, date);
     const hours = day.uncovered
       .filter((u) => u.slot.asbId === absentId)

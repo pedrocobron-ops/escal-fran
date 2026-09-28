@@ -1,15 +1,16 @@
 import { Component, type ReactNode } from 'react';
-import { STORAGE_KEY } from '../../store/storage';
+import { COPY_PREFIX, STORAGE_KEY } from '../../store/storage';
 
 interface State {
   error: Error | null;
+  confirmReset: boolean;
 }
 
 /** Tela de erro com saída: exportar o que está salvo e voltar para a escala inicial. */
 export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
-  state: State = { error: null };
+  state: State = { error: null, confirmReset: false };
 
-  static getDerivedStateFromError(error: Error): State {
+  static getDerivedStateFromError(error: Error): Partial<State> {
     return { error };
   }
 
@@ -31,8 +32,15 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
     setTimeout(() => URL.revokeObjectURL(url), 5000);
   };
 
+  /** Guarda uma cópia do que está salvo e só então volta para a escala inicial. */
   private reset = () => {
+    if (!this.state.confirmReset) {
+      this.setState({ confirmReset: true });
+      return;
+    }
     try {
+      const raw = window.localStorage.getItem(STORAGE_KEY);
+      if (raw) window.localStorage.setItem(`${COPY_PREFIX}${new Date().toISOString()}`, raw);
       window.localStorage.removeItem(STORAGE_KEY);
     } catch {
       // sem localStorage não há o que limpar
@@ -51,7 +59,9 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
           <div className="toolbar" style={{ marginBottom: 0 }}>
             <button className="btn" onClick={() => window.location.reload()}>Tentar de novo</button>
             <button className="btn" onClick={this.exportRaw}>Salvar os dados atuais em arquivo</button>
-            <button className="btn danger" onClick={this.reset}>Voltar para a escala inicial</button>
+            <button className="btn danger" onClick={this.reset}>
+              {this.state.confirmReset ? 'Confirmar: voltar para a escala inicial (guarda uma cópia)' : 'Voltar para a escala inicial'}
+            </button>
           </div>
         </div>
       </main>
