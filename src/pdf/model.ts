@@ -4,7 +4,7 @@ import type { Absence, AppData, Asb, EffectiveDay, IsoDate, Task } from '../doma
 import {
   HOURS, OPEN_END, OPEN_START, SLOT_KIND_LABEL, WEEKDAY_LABEL, WEEKDAY_SHORT, absencesBetween, analyze, baseDay, dentistAbsencesBetween, dentistsAt, validExtraShiftsBetween,
   effectiveDay, firstOfMonth, formatDate, formatDayMonth, formatMonth, formatRange, isExternalSubstitute, isTeamSubstitute,
-  dataForDate, findAsbAnywhere, findDentistAnywhere, isOpenOn, lastOfMonth, monthRotation, resolveTask, todayIso, weekdayOf, weeksOfMonth,
+  addDays, adjustedSlotCount, dataForDate, findAsbAnywhere, findDentistAnywhere, isOpenOn, lastOfMonth, monthRotation, rotationTasksInMonth, resolveTask, todayIso, weekdayOf, weeksOfMonth,
 } from '../domain';
 
 const AFTERNOON_START = 13;
@@ -44,6 +44,8 @@ export interface MonthPdfModel {
   title: string;
   monthLabel: string;
   hoursLabel: string;
+  /** Feriados e dias fechados do mês, em texto. */
+  closedDays?: string;
   asbRows: AsbRow[];
   roomNames: string[];
   roomRows: RoomRow[];
@@ -110,6 +112,34 @@ function coverLabel(data: AppData, a: Absence): string {
   if (isTeamSubstitute(a)) return asbName(data, a.substitute.asbId);
   if (isExternalSubstitute(a)) return `${a.substitute.externalName} (externa)`;
   return 'sem substituta';
+}
+
+/**
+ * Período para mostrar num dia: junta registros encostados da mesma ASB e motivo (por
+ * exemplo, férias divididas quando a substituta saiu da equipe), para o dia passado
+ * continuar dizendo "21/09 a 09/10".
+ */
+function mergedPeriodLabel(data: AppData, a: Absence): string {
+  let from = a.from;
+  let to = a.to;
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const x of data.absences) {
+      if (x.asbId !== a.asbId || x.reason !== a.reason) continue;
+      if (x.to === addDays(from, -1)) { from = x.from; changed = true; }
+      if (x.from === addDays(to, 1)) { to = x.to; changed = true; }
+    }
+  }
+  return from === to ? formatDate(from) : `${formatDate(from)} a ${formatDate(to)}`;
+}
+
+/** "Dias fechados no mês: 12/10 (Nossa Senhora Aparecida)", ou undefined se não houver. */
+function closedDaysLabel(current: AppData, year: number, month: number): string | undefined {
+  const first = firstOfMonth(year, month);
+  const last = lastOfMonth(year, month);
+  const list = (current.closedDates ?? []).filter((c) => c.date >= first && c.date <= last).sort((a, b) => a.date.localeCompare(b.date));
+  if (list.length === 0) return undefined;
+  return `Feriados e dias fechados no mês: ${list.map((c) => `${formatDayMonth(c.date)}${c.note ? ` (${c.note})` : ''}`).join(', ')}.`;
 }
 
 function periodLabel(a: Absence): string {
@@ -209,7 +239,7 @@ export function monthPdfModel(current: AppData, year: number, month: number, now
   const data = dataForDate(current, lastOfMonth(year, month));
   const weeks = weeksOfMonth(year, month);
   const day = baseDay(data);
-  const rotations = data.tasks.filter((t): t is Task & { assignment: { mode: 'rotation' } } => t.assignment.mode === 'rotation');
+  const rotations = rotationTasksInMonth(current, year, month).filter((t): t is Task & { assignment: { mode: 'rotation' } } => t.assignment.mode === 'rotation');
   const weeklyRows: RotationRow[] = rotations
     .filter((t) => t.assignment.period === 'week')
     .map((t) => {
@@ -252,6 +282,7 @@ export function monthPdfModel(current: AppData, year: number, month: number, now
     title: 'Escala mensal de trabalho - CEO',
     monthLabel: formatMonth(year, month),
     hoursLabel: openingLabel(data),
+    closedDays: closedDaysLabel(current, year, month),
     asbRows: asbRows(data, day),
     roomNames,
     roomRows: rows,
@@ -318,14 +349,17 @@ export function dayPdfModel(current: AppData, date: IsoDate, now: Date = new Dat
       holder: r.holders.length > 0 ? r.holders.map((p) => personLabel(data, p)).join(' e ') : r.noSubstitute ? 'sem substituta' : 'ninguém',
       reason: r.reason,
     }));
-  const alerts = analyze(data, day).map((a) => `${a.level === 'critico' ? 'CRÍTICO' : a.level === 'aviso' ? 'Aviso' : 'Info'}: ${a.message}`);
+  const rank = { critico: 0, aviso: 1, info: 2 } as const;
+  const alerts = [...analyze(data, day)].sort((a, b) => rank[a.level] - rank[b.level]).map((a) => `${a.level === 'critico' ? 'CRÍTICO' : a.level === 'aviso' ? 'Aviso' : 'Info'}: ${a.message}`);
   const notes = [
     ...day.dentistsOff.map((d) => {
       const abs = day.dentistAbsences.find((x) => x.dentistId === d.id);
       return `${d.name} de folga${abs ? ` (${abs.reason})` : ''}, ${data.rooms.find((r) => r.id === d.roomId)?.name ?? ''} ${formatRange(d.start, d.end)}.`;
     }),
     ...day.extraShifts.map((e) => `${asbName(data, e.asbId)} faz hora extra ${formatRange(e.start, e.end)}${e.note ? ` (${e.note})` : ''}.`),
-    ...(day.overrides.length > 0 ? [`${day.overrides.length} ajuste${day.overrides.length > 1 ? 's' : ''} feito${day.overrides.length > 1 ? 's' : ''} só para este dia.`] : []),
+    ...(adjustedSlotCount(day.overrides) > 0
+      ? [`${adjustedSlotCount(day.overrides)} ajuste${adjustedSlotCount(day.overrides) > 1 ? 's' : ''} feito${adjustedSlotCount(day.overrides) > 1 ? 's' : ''} só para este dia.`]
+      : []),
   ];
   return {
     title: 'Escala do dia - CEO',
@@ -333,7 +367,7 @@ export function dayPdfModel(current: AppData, date: IsoDate, now: Date = new Dat
     hoursLabel: openingLabel(data),
     open: day.open,
     closedNote: day.closedNote,
-    absences: day.absences.map((a) => ({ asb: asbName(data, a.asbId), period: periodLabel(a), reason: a.reason, cover: coverLabel(data, a) })),
+    absences: day.absences.map((a) => ({ asb: asbName(data, a.asbId), period: mergedPeriodLabel(data, a), reason: a.reason, cover: coverLabel(data, a) })),
     notes,
     columns: [...roomNames, ...SUPPORT.map((c) => c.label)],
     rows: fullRows,

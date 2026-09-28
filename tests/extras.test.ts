@@ -51,7 +51,7 @@ describe('folga de dentista', () => {
     d.dentistAbsences = [{ id: 'df1', dentistId: 'id001', from: MON, to: MON, reason: 'Folga' }];
     const r = resolveTask(d, d.tasks.find((t) => t.id === 'id018')!, MON);
     expect(r.holders).toEqual([{ type: 'asb', asbId: ID.laura }]);
-    expect(r.reason).toBe('Dr. Francisco está de folga; fica com quem normalmente está com ele: Laura.');
+    expect(r.reason).toBe('Dr. Francisco está de folga; fica com quem normalmente trabalha nesse atendimento: Laura.');
     d.absences.push(absence({ asbId: ID.laura, from: MON, to: MON }));
     const r2 = resolveTask(d, d.tasks.find((t) => t.id === 'id018')!, MON);
     expect(r2.holders).toEqual([]);

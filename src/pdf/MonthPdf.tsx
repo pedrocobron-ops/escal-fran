@@ -17,7 +17,19 @@ function Header({ m }: { m: MonthPdfModel }) {
       <Text style={s.title}>{m.title}</Text>
       <Text style={s.subtitle}>{capitalize(m.monthLabel)}</Text>
       <Text style={s.meta}>{m.hoursLabel}</Text>
+      {m.closedDays && <Text style={[s.meta, { marginTop: -6 }]}>{m.closedDays}</Text>}
     </View>
+  );
+}
+
+/** "SEM ASB" em destaque (branco no preto); o resto da célula em negrito. */
+export function AsbText({ text }: { text: string }) {
+  if (!text.startsWith('SEM ASB')) return <Text style={s.bold}>{text}</Text>;
+  return (
+    <Text>
+      <Text style={s.alarm}> SEM ASB </Text>
+      <Text style={s.bold}>{text.slice('SEM ASB'.length)}</Text>
+    </Text>
   );
 }
 
@@ -65,7 +77,7 @@ export function MonthPdf({ m }: { m: MonthPdfModel }) {
               {r.cells.map((c, i) => (
                 <View key={i} style={s.cell}>
                   <Text style={c.dentist === 'sala vazia' ? s.muted : {}}>{c.dentist}</Text>
-                  {c.asb ? <Text style={c.asb.startsWith('SEM ASB') ? s.warn : s.bold}>{c.asb}</Text> : null}
+                  {c.asb ? <AsbText text={c.asb} /> : null}
                 </View>
               ))}
             </View>

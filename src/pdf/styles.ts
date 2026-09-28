@@ -19,6 +19,8 @@ export const pdfStyles = StyleSheet.create({
   bold: { fontFamily: 'Helvetica-Bold' },
   muted: { color: '#555' },
   warn: { fontFamily: 'Helvetica-Bold', color: '#7a0000' },
+  // Falta grave (sala sem ASB): texto branco em fundo preto, que se destaca impresso em preto e branco.
+  alarm: { fontFamily: 'Helvetica-Bold', color: '#fff', backgroundColor: '#000' },
   small: { fontSize: 7.5 },
   footer: { position: 'absolute', bottom: 14, left: 28, right: 28, fontSize: 7.5, color: '#555', flexDirection: 'row', justifyContent: 'space-between' },
   bullet: { flexDirection: 'row', marginBottom: 2 },

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import {
   DndContext,
   DragOverlay,
@@ -14,13 +14,14 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
+import { getEventCoordinates } from '@dnd-kit/utilities';
 import type { Alert, AppData, Asb, EffectiveDay, EffectiveSlot, IsoDate, SlotKind } from '../../domain';
 import {
   HOURS, WEEKDAY_LABEL, allowedHours, dataForDate, analyze, baseDay, canAssign, canAssignOn, dentistsAt, effectiveDay, formatBlock, formatDate,
-  findAsbAnywhere, formatHour, formatRange, isExternalSubstitute, isTeamSubstitute, isValidIso, proteseAlerts, todayIso, validHours, weekdayOf,
+  adjustedSlotCount, findAsbAnywhere, formatHour, formatRange, isExternalSubstitute, isTeamSubstitute, isValidIso, proteseAlerts, todayIso, validHours, weekdayOf,
 } from '../../domain';
 import {
-  addExtraHour, clearDayOverrides, clearSchedule, hasDayOverrides, removeSlotAt, setDaySlots, useData, useStore, type CellTarget,
+  addExtraHour, boardExtrasOn, clearDayOverrides, clearSchedule, hasDayOverrides, removeSlotAt, setDaySlots, useData, useStore, type CellTarget,
 } from '../../store/useStore';
 import { colorMap, tint } from '../colors';
 import { useConfirm } from '../common/Modal';
@@ -70,10 +71,43 @@ interface PendingChoice {
   choices: Choice[];
 }
 
+/**
+ * Alvo do arraste = o que está de fato visível sob o dedo ou o mouse. Uma célula coberta
+ * pela paleta fixa ou fora da área visível do quadro nunca recebe a ficha.
+ */
 const collision: CollisionDetection = (args) => {
+  const p = args.pointerCoordinates;
+  if (p && typeof document !== 'undefined') {
+    const el = document.elementFromPoint(p.x, p.y);
+    if (el) {
+      const hit = args.droppableContainers.find((c) => c.node.current?.contains(el));
+      return hit ? [{ id: hit.id, data: { droppableContainer: hit, value: 0 } }] : [];
+    }
+  }
   const within = pointerWithin(args);
   return within.length > 0 ? within : rectIntersection(args);
 };
+
+/** Altura do que fica preso no topo da tela: a barra do app (computador) ou a paleta (celular). */
+function useStickyTop(): number {
+  const [top, setTop] = useState(0);
+  useEffect(() => {
+    const mobile = window.matchMedia('(max-width: 900px)');
+    const measure = () => {
+      const el = document.querySelector(mobile.matches ? '.palette' : '.app-header');
+      setTop(el ? Math.round(el.getBoundingClientRect().height) : 0);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    for (const sel of ['.palette', '.app-header']) {
+      const el = document.querySelector(sel);
+      if (el) ro.observe(el);
+    }
+    mobile.addEventListener('change', measure);
+    return () => { ro.disconnect(); mobile.removeEventListener('change', measure); };
+  }, []);
+  return top;
+}
 
 function targetOf(column: Column): CellTarget {
   return column.kind === 'sala' ? { kind: 'sala', roomId: column.roomId } : { kind: column.kind };
@@ -101,6 +135,10 @@ export function Board() {
   const [pending, setPending] = useState<PendingRange | null>(null);
   const [choice, setChoice] = useState<PendingChoice | null>(null);
   const shiftRef = useRef(false);
+  const headRef = useRef<HTMLDivElement>(null);
+  const paletteRef = useRef<HTMLElement>(null);
+  const overPaletteRef = useRef(false);
+  const stickyTop = useStickyTop();
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => { if (e.key === 'Shift') shiftRef.current = true; };
@@ -195,13 +233,6 @@ export function Board() {
     [isDay, date, entriesAt, isAutomatic],
   );
 
-  const place = useCallback(
-    (asbId: string, hours: number[], column: Column, additive: boolean, orig?: SlotItem, asApoio = false) => {
-      apply(placement(asbId, hours, column, additive, orig, asApoio));
-    },
-    [apply, placement],
-  );
-
   const removeChip = useCallback(
     (asbId: string, hour: number, kind: SlotKind, roomId?: string) => {
       if (!isDay) {
@@ -221,12 +252,14 @@ export function Board() {
 
   /**
    * Coloca a ASB nas horas da coluna, perguntando antes quando a sala já tem ASB
-   * ou quando ela está em outra sala nesses horários (vale para arraste simples e faixa).
+   * ou quando ela está em outra sala nesses horários (vale para arraste simples, faixa
+   * e hora extra). `extraHour`: registra também a hora extra desse bloco, na mesma mudança.
    */
-  const decide = (asb: Asb, hours: number[], column: Column, orig?: SlotItem) => {
+  const decide = (asb: Asb, hours: number[], column: Column, orig?: SlotItem, extraHour?: number) => {
     const target = targetOf(column);
     const others: CellTarget[] = [];
     const occupants = new Set<string>();
+    const occupied = new Set<number>();
     if (target.kind === 'sala') {
       for (const h of hours) {
         // Trocar uma ficha de lugar na mesma hora mantém os outros lugares: não pergunta.
@@ -239,6 +272,7 @@ export function Board() {
           if (s.kind !== 'sala' || s.roomId !== target.roomId || s.hour !== h) continue;
           if (s.who.type === 'asb' && s.who.asbId === asb.id) continue;
           occupants.add(s.who.type === 'asb' ? asbById.get(s.who.asbId)?.name ?? '' : `${s.who.name} (externa)`);
+          occupied.add(h);
         }
       }
     }
@@ -246,20 +280,34 @@ export function Board() {
     const when = whenText(hours);
     const range = hours.length > 1;
     const occ = [...occupants].join(' e ');
+    const many = occupants.size > 1;
     const stay = others.map(inPlace).join(' e ');
     const leave = others.map(fromPlace).join(' e ');
-    const go = (additive: boolean, asApoio: boolean) => () => { place(asb.id, hours, column, additive, orig, asApoio); setChoice(null); };
+    // Apoio só faz sentido onde a sala tem ASB; nas outras horas da faixa ela entra como ASB da sala.
+    const freeHours = hours.filter((h) => !occupied.has(h));
+    const go = (additive: boolean, asApoio: boolean) => () => {
+      setChoice(null);
+      const steps =
+        asApoio && freeHours.length > 0
+          ? [placement(asb.id, hours.filter((h) => occupied.has(h)), column, additive, orig, true), placement(asb.id, freeHours, column, additive, orig, false)]
+          : [placement(asb.id, hours, column, additive, orig, asApoio)];
+      apply((d) => {
+        if (extraHour !== undefined) addExtraHour(d, asb.id, date, extraHour);
+        for (const step of steps) step(d);
+      });
+    };
+    const freeNote = freeHours.length > 0 ? ` ${whenText(freeHours)[0].toUpperCase()}${whenText(freeHours).slice(1)}, sem ASB na sala, ela entra como ASB da sala.` : '';
     if (occupants.size > 0) {
       const choices: Choice[] = [
         {
           label: `Apoio da ${room}`,
-          hint: `${asb.name} ajuda na ${room}; ${occ} continua como ASB da sala.${others.length > 0 ? ` Sai ${leave}.` : ''}`,
+          hint: `${asb.name} ajuda na ${room}; ${occ} ${many ? 'continuam' : 'continua'} como ASB da sala.${freeNote}${others.length > 0 ? ` Sai ${leave}.` : ''}`,
           primary: true,
           onChoose: go(false, true),
         },
       ];
       if (others.length > 0) {
-        choices.push({ label: `Apoio da ${room} e continuar ${stay}`, hint: 'Fica nas duas; gera aviso de sala dividida.', onChoose: go(true, true) });
+        choices.push({ label: `Apoio da ${room} e continuar ${stay}`, hint: `Fica nas duas; gera aviso de sala dividida.${freeNote}`, onChoose: go(true, true) });
       }
       choices.push({
         label: `Também como ASB da ${room}`,
@@ -269,8 +317,8 @@ export function Board() {
       setChoice({
         title: `${room} já tem ASB ${range ? 'nesse horário' : when}`,
         message: range
-          ? `Entre ${formatHour(hours[0])} e ${formatHour(hours[hours.length - 1] + 1)}, ${occ} já está na ${room} (em todo ou em parte do horário). Como colocar ${asb.name}?`
-          : `${occ} já está na ${room} ${when}. Como colocar ${asb.name}?`,
+          ? `Entre ${formatHour(hours[0])} e ${formatHour(hours[hours.length - 1] + 1)}, ${occ} já ${many ? 'estão' : 'está'} na ${room} (em todo ou em parte do horário). Como colocar ${asb.name}?`
+          : `${occ} já ${many ? 'estão' : 'está'} na ${room} ${when}. Como colocar ${asb.name}?`,
         choices,
       });
       return;
@@ -288,23 +336,28 @@ export function Board() {
       });
       return;
     }
-    place(asb.id, hours, column, false, orig);
+    go(false, false)();
   };
 
-  /** Modo Dia: soltar fora do contrato oferece registrar hora extra nesse bloco. */
+  /**
+   * Modo Dia: soltar fora do contrato oferece registrar hora extra nesse bloco. A ficha
+   * arrastada do quadro fica onde estava (o gesto é "fica mais uma hora"), e a sala de
+   * destino passa pelas mesmas perguntas de sala ocupada.
+   */
   const askExtra = (asb: Asb, column: Column, hour: number, orig?: SlotItem) => {
     setChoice({
       title: 'Fora do horário de contrato',
-      message: `${asb.name} trabalha ${formatRange(asb.start, asb.end)}. Registrar hora extra das ${formatHour(hour)} às ${formatHour(hour + 1)} em ${formatDate(date)} e colocá-la em ${column.label}?`,
+      message: `${asb.name} trabalha ${formatRange(asb.start, asb.end)}. Registrar hora extra das ${formatHour(hour)} às ${formatHour(hour + 1)} em ${formatDate(date)} e colocá-la em ${column.label}?${
+        orig ? ` Ela continua também onde está às ${formatHour(orig.hour)}.` : ''
+      }`,
       choices: [
         {
           label: 'Registrar hora extra e colocar',
-          hint: 'Aparece em Ausências e extras e entra no total do mês para pagamento.',
+          hint: 'Aparece em Ausências e extras e entra no total do mês para pagamento. Sai junto se você limpar os ajustes do dia.',
           primary: true,
           onChoose: () => {
-            const put = placement(asb.id, [hour], column, false, orig);
-            apply((d) => { addExtraHour(d, asb.id, date, hour); put(d); });
             setChoice(null);
+            decide(asb, [hour], column, undefined, hour);
           },
         },
       ],
@@ -357,7 +410,11 @@ export function Board() {
     if (isDay) {
       const ok = await confirm({
         title: `Desfazer os ajustes de ${formatDate(date)}?`,
-        message: 'O dia volta a seguir a escala base (com as ausências e folgas cadastradas). Dá para desfazer com Ctrl+Z.',
+        message: `O dia volta a seguir a escala base (com as ausências e folgas cadastradas).${
+          boardExtrasOn(current, date).length > 0
+            ? ` As horas extras registradas pelo quadro nesta data também saem: ${boardExtrasOn(current, date).map((e) => `${findAsbAnywhere(current, e.asbId)?.name ?? '?'} ${formatRange(e.start, e.end)}`).join(', ')}.`
+            : ''
+        } Dá para desfazer no botão Desfazer, no topo.`,
         confirmLabel: 'Limpar ajustes do dia',
         danger: true,
       });
@@ -366,7 +423,7 @@ export function Board() {
     }
     const ok = await confirm({
       title: 'Limpar a escala base?',
-      message: 'Todas as fichas do quadro serão removidas. Dá para desfazer com Ctrl+Z.',
+      message: 'Todas as fichas do quadro serão removidas. Dá para desfazer no botão Desfazer, no topo.',
       confirmLabel: 'Limpar',
       danger: true,
     });
@@ -377,7 +434,11 @@ export function Board() {
   if (isEmpty) return <EmptyState />;
 
   // Quantos horários (ASB e hora) têm ajuste nesta data, inclusive os que deixaram de valer.
-  const overridesCount = isDay ? new Set((current.dayOverrides ?? []).filter((o) => o.date === date).map((o) => `${o.asbId}@${o.hour}`)).size : 0;
+  const gridStyle = {
+    gridTemplateColumns: `var(--hour-w) repeat(${columns.length}, minmax(var(--cell-min), 1fr))`,
+    minWidth: `calc(var(--hour-w) + ${columns.length} * var(--cell-min))`,
+  };
+  const overridesCount = isDay ? adjustedSlotCount((current.dayOverrides ?? []).filter((o) => o.date === date)) : 0;
 
   return (
     <div>
@@ -409,7 +470,6 @@ export function Board() {
             </button>
             <span className="muted small hint-shift">ou segure Shift ao soltar</span>
             <span className="spacer" />
-            <UndoRedo />
             {isDay ? (
               <button className="btn danger" onClick={onClear} disabled={!hasDayOverrides(data, date)}>
                 Limpar ajustes do dia{overridesCount > 0 ? ` (${overridesCount})` : ''}
@@ -437,26 +497,39 @@ export function Board() {
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
         onDragCancel={() => setActive(null)}
-        // Rolagem automática só dentro do quadro, bem perto da borda e devagar: no celular
-        // a 2ª coluna fica perto da borda e o quadro não pode correr para outra sala sozinho,
-        // e a página não rola (a paleta fixa no topo não pode fugir do dedo).
-        autoScroll={{ threshold: { x: 0.08, y: 0.1 }, acceleration: 4, canScroll: (el) => el.classList.contains('board-scroll') }}
+        onDragMove={(e) => {
+          // Com o dedo sobre a paleta, a página não rola sozinha (a paleta fixa não pode fugir).
+          const start = getEventCoordinates(e.activatorEvent);
+          const rect = paletteRef.current?.getBoundingClientRect();
+          if (!start || !rect) return;
+          const x = start.x + e.delta.x;
+          const y = start.y + e.delta.y;
+          overPaletteRef.current = x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+        }}
+        // Rolagem automática só bem perto da borda e devagar: no celular (em pé ou deitado)
+        // a coluna da borda precisa poder ser alvo sem o quadro correr para a seguinte.
+        autoScroll={{
+          threshold: { x: 0.04, y: 0.06 },
+          acceleration: 3,
+          canScroll: (el) => el.classList.contains('board-scroll') || (el === document.scrollingElement && !overPaletteRef.current),
+        }}
       >
         <div className="board-layout">
-          <div className="board-scroll">
-            <div
-              className="board"
-              style={{
-                gridTemplateColumns: `var(--hour-w) repeat(${columns.length}, minmax(var(--cell-min), 1fr))`,
-                minWidth: `calc(var(--hour-w) + ${columns.length} * var(--cell-min))`,
-              }}
-            >
-              <div className="hcell">Hora</div>
-              {columns.map((c) => (
-                <div key={c.key} className="hcell" style={c.color ? { background: tint(c.color, 0.8) } : undefined}>
-                  {c.label}
-                </div>
-              ))}
+          <div className="board-col">
+            {/* Cabeçalho das colunas fora da área que rola de lado: fica preso no topo da tela
+                enquanto a página desce, e acompanha a rolagem lateral do quadro. */}
+            <div className="board-head" ref={headRef} style={{ top: stickyTop }}>
+              <div className="board" style={gridStyle}>
+                <div className="hcell">Hora</div>
+                {columns.map((c) => (
+                  <div key={c.key} className="hcell" style={c.color ? { background: tint(c.color, 0.8) } : undefined}>
+                    {c.label}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="board-scroll" onScroll={(e) => { if (headRef.current) headRef.current.scrollLeft = e.currentTarget.scrollLeft; }}>
+            <div className="board" style={gridStyle}>
               {HOURS.map((hour) => (
                 <RowCells
                   key={hour}
@@ -475,10 +548,11 @@ export function Board() {
                 />
               ))}
             </div>
+            </div>
           </div>
-          <Palette day={day} asbs={data.asbs} colors={colors} readOnly={readOnly} isDay={isDay} active={active} alerts={alerts} />
+          <Palette ref={paletteRef} day={day} asbs={data.asbs} colors={colors} readOnly={readOnly} isDay={isDay} active={active} alerts={alerts} />
         </div>
-        <DragOverlay dropAnimation={null}>
+        <DragOverlay dropAnimation={null} style={{ pointerEvents: 'none' }}>
           {activeAsb ? <ChipOverlay label={activeAsb.name} color={colors.get(activeAsb.id) ?? '#555'} /> : null}
         </DragOverlay>
       </DndContext>
@@ -631,6 +705,7 @@ function Cell({ column, hour, day, slots, alertLevel, activeAsb, allowedAt, extr
 }
 
 interface PaletteProps {
+  ref?: RefObject<HTMLElement | null>;
   day: EffectiveDay;
   asbs: Asb[];
   colors: Map<string, string>;
@@ -640,13 +715,17 @@ interface PaletteProps {
   alerts: Alert[];
 }
 
-function Palette({ day, asbs, colors, readOnly, isDay, active, alerts }: PaletteProps) {
+function Palette({ ref, day, asbs, colors, readOnly, isDay, active, alerts }: PaletteProps) {
   const { setNodeRef, isOver } = useDroppable({ id: 'palette', data: { type: 'palette' } satisfies PaletteDrop, disabled: readOnly || active?.type !== 'slot' });
+  const setRefs = (el: HTMLElement | null) => {
+    setNodeRef(el);
+    if (ref) ref.current = el;
+  };
   const sorted = [...asbs].filter((a) => a.active).sort((a, b) => a.start - b.start || a.name.localeCompare(b.name));
   const absenceOf = (id: string) => day.absences.find((x) => x.asbId === id);
   const lunchAlert = new Set(alerts.filter((a) => a.code === 'sem-almoco').map((a) => a.asbId));
   return (
-    <aside ref={setNodeRef} className={`palette${isOver ? ' drop-target' : ''}${active?.type === 'slot' ? ' removing' : ''}`}>
+    <aside ref={setRefs} className={`palette${isOver ? ' drop-target' : ''}${active?.type === 'slot' ? ' removing' : ''}`}>
       <div className="card">
         <h3>ASBs</h3>
         <p className="muted small">
@@ -658,6 +737,11 @@ function Palette({ day, asbs, colors, readOnly, isDay, active, alerts }: Palette
                 ? 'Ajustes feitos aqui valem só para esta data. Soltar fora do horário da ASB pergunta se é hora extra.'
                 : 'Arraste uma ficha para o quadro. No celular, segure a ficha antes de arrastar. Para a mesma ASB cobrir duas salas, solte na segunda sala e escolha Cobrir as duas.'}
         </p>
+        {!readOnly && (
+          <p className="muted hint-touch">
+            Segure a ficha meio segundo e arraste.{isDay ? ' Fora do horário dela, pergunta se é hora extra.' : ''} Solte na paleta para tirar.
+          </p>
+        )}
         <div className="palette-list">
           {sorted.map((asb) => {
             const abs = absenceOf(asb.id);
@@ -718,7 +802,8 @@ function DaySummary({ day, data }: { day: EffectiveDay; data: AppData }) {
     items.push(`${d.name} de folga${abs ? ` (${abs.reason})` : ''}: a ASB da sala fica livre e é remanejada se outra sala precisar.`);
   }
   for (const e of day.extraShifts) items.push(`${name(e.asbId)} faz hora extra ${formatRange(e.start, e.end)}${e.note ? ` (${e.note})` : ''}.`);
-  if (day.overrides.length > 0) items.push(`${day.overrides.length} ajuste${day.overrides.length > 1 ? 's' : ''} feito${day.overrides.length > 1 ? 's' : ''} só para este dia (fichas tracejadas).`);
+  const adjusted = adjustedSlotCount(day.overrides);
+  if (adjusted > 0) items.push(`${adjusted} ajuste${adjusted > 1 ? 's' : ''} feito${adjusted > 1 ? 's' : ''} só para este dia (fichas tracejadas).`);
   if (items.length === 0) return <p className="muted small">Sem ausências, folgas ou horas extras nesta data. O dia segue a escala base. Arraste fichas para ajustar só este dia.</p>;
   return (
     <div className="card" style={{ marginBottom: 12 }}>
@@ -759,26 +844,13 @@ function TodayHint({ current, onOpen }: { current: AppData; onOpen: () => void }
   );
 }
 
-export function UndoRedo() {
-  const past = useStore((s) => s.past.length);
-  const future = useStore((s) => s.future.length);
-  const undo = useStore((s) => s.undo);
-  const redo = useStore((s) => s.redo);
-  return (
-    <>
-      <button className="btn" onClick={undo} disabled={past === 0} title="Ctrl+Z">Desfazer</button>
-      <button className="btn" onClick={redo} disabled={future === 0} title="Ctrl+Shift+Z">Refazer</button>
-    </>
-  );
-}
-
 function EmptyState() {
   const resetToSeed = useStore((s) => s.resetToSeed);
   const confirm = useConfirm();
   const load = async () => {
     const ok = await confirm({
       title: 'Carregar a escala inicial?',
-      message: 'Salas, dentistas, ASBs, tarefas, ausências, folgas e horas extras passam a ser os dos documentos do CEO; o que estiver cadastrado agora é substituído. Dá para desfazer com Ctrl+Z.',
+      message: 'Salas, dentistas, ASBs, tarefas, ausências, folgas e horas extras passam a ser os dos documentos do CEO; o que estiver cadastrado agora é substituído. Dá para desfazer no botão Desfazer, no topo.',
       confirmLabel: 'Carregar escala inicial',
       danger: true,
     });

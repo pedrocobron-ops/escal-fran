@@ -188,6 +188,7 @@ export function AbsencesScreen() {
                   <tbody>
                     {extras.map((e) => {
                       const absent = absenceFor(data, e.asbId, e.date);
+                      const closedDay = !absent && !isOpenOn(dataForDate(data, e.date), e.date);
                       return (
                         <tr key={e.id}>
                           <td><span className="chip static" style={{ background: colors.get(e.asbId) ?? '#555' }}>{asbName(e.asbId)}</span></td>
@@ -196,6 +197,7 @@ export function AbsencesScreen() {
                           <td data-label="Obs.">
                             {e.note ?? ''}
                             {absent && <span className="error small"> {e.note ? '. ' : ''}Não vale: ela está ausente nesse dia ({absent.reason}).</span>}
+                            {closedDay && <span className="error small"> {e.note ? '. ' : ''}Não vale: o CEO não abre nesse dia.</span>}
                           </td>
                           <td className="actions">
                             <button className="btn sm" onClick={() => setEditExtra(e)}>Editar</button>{' '}
@@ -398,20 +400,26 @@ function AbsenceForm({ absence, onClose, onSave }: { absence?: Absence; onClose:
 
   const reasonable = isReasonablePeriod(from, to);
   const openDays = useMemo(() => openDaysIn(data, from, to), [data, from, to]);
-  const linkedIds = linked.map((e) => e.id);
+  // Editando com a mesma substituta: as horas extras de dias que já passaram foram trabalhadas
+  // (e entram no pagamento). Ficam como estão; só o que ainda vai acontecer é refeito.
+  const today = todayIso();
+  const sameSub = !!absence && isTeamSubstitute(absence) && cover === 'team' && subId === absence.substitute.asbId;
+  const keptPast = sameSub ? linked.filter((e) => e.date < today && e.date >= from && e.date <= to) : [];
+  const recalcFrom = sameSub && from < today ? today : from;
+  const linkedIds = linked.filter((e) => !keptPast.includes(e)).map((e) => e.id);
   const suggestions = useMemo(
     () => (reasonable && asbId ? coverageSuggestions({ ...data, extraShifts: (data.extraShifts ?? []).filter((e) => !linkedIds.includes(e.id)) }, asbId, from, to, absence?.id) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [data, asbId, from, to, reasonable, absence?.id],
   );
   const needed = useMemo(
-    () => (reasonable && cover === 'team' && subId ? extraNeededToCover(data, asbId, subId, from, to, absence?.id, linkedIds) : []),
+    () => (reasonable && cover === 'team' && subId && recalcFrom <= to ? extraNeededToCover(data, asbId, subId, recalcFrom, to, absence?.id, linkedIds) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [data, asbId, subId, from, to, cover, reasonable, absence?.id],
+    [data, asbId, subId, from, to, cover, reasonable, absence?.id, recalcFrom],
   );
   const total = suggestions[0]?.total ?? 0;
   const useful = suggestions.filter((s) => s.covered + s.needsExtra > 0);
-  const sub = data.asbs.find((a) => a.id === subId);
+  const sub = data.asbs.find((a) => a.id === subId) ?? (subId ? findAsbAnywhere(data, subId) : undefined);
   const absentName = data.asbs.find((a) => a.id === asbId)?.name ?? '';
 
   // Simula a ausência como está no formulário para mostrar o que continua descoberto.
@@ -419,29 +427,34 @@ function AbsenceForm({ absence, onClose, onSave }: { absence?: Absence; onClose:
     if (!reasonable || !asbId) return [];
     const id = absence?.id ?? '__nova__';
     const substitute = cover === 'team' && subId ? { asbId: subId } : cover === 'external' && external.trim() ? { externalName: external.trim() } : undefined;
-    const extras = cover === 'team' && subId && createExtra ? needed.map((n, i) => ({ id: `__sim${i}`, asbId: subId, date: n.date, start: n.start, end: n.end })) : [];
+    const extras = [
+      ...keptPast,
+      ...(cover === 'team' && subId && createExtra ? needed.map((n, i) => ({ id: `__sim${i}`, asbId: subId, date: n.date, start: n.start, end: n.end })) : []),
+    ];
     const sim: AppData = {
       ...data,
       absences: [...data.absences.filter((a) => a.id !== id), { id, asbId, from, to, reason, substitute }],
       extraShifts: [...(data.extraShifts ?? []).filter((e) => e.absenceId !== id), ...extras],
     };
     return stillUncovered(sim, asbId, from, to);
-  }, [data, asbId, from, to, reason, cover, subId, external, createExtra, needed, reasonable, absence?.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, asbId, from, to, reason, cover, subId, external, createExtra, needed, reasonable, absence?.id, keptPast.map((e) => e.id).join(',')]);
 
   // Quem está ausente também é substituta de outra ausência no período?
   const coveringOthers = data.absences.filter(
     (a) => a.id !== absence?.id && isTeamSubstitute(a) && a.substitute.asbId === asbId && a.from <= to && a.to >= from,
   );
   // A ausente tem horas extras (não ligadas a esta ausência) no período?
-  const ownExtras = (data.extraShifts ?? []).filter((e) => e.asbId === asbId && e.date >= from && e.date <= to && e.absenceId !== absence?.id);
+  const ownExtras = (data.extraShifts ?? []).filter((e) => e.asbId === asbId && e.date >= from && e.date <= to && !(absence && e.absenceId === absence.id));
   // Jornada da substituta com a hora extra.
   const longDays = sub
     ? [...new Set(needed.map((n) => n.date))]
         .map((date) => {
           const extraHours = needed.filter((n) => n.date === date).reduce((acc, n) => acc + (n.end - n.start), 0);
           const already = (data.extraShifts ?? []).filter((e) => e.asbId === sub.id && e.date === date && !linkedIds.includes(e.id)).reduce((acc, e) => acc + outsideContract(e.start, e.end, sub).reduce((s, [a, b]) => s + b - a, 0), 0);
-          const starts = [sub.start, ...needed.filter((n) => n.date === date).map((n) => n.start)];
-          const ends = [sub.end, ...needed.filter((n) => n.date === date).map((n) => n.end)];
+          const existing = (data.extraShifts ?? []).filter((e) => e.asbId === sub.id && e.date === date && !linkedIds.includes(e.id));
+          const starts = [sub.start, ...needed.filter((n) => n.date === date).map((n) => n.start), ...existing.map((e) => e.start)];
+          const ends = [sub.end, ...needed.filter((n) => n.date === date).map((n) => n.end), ...existing.map((e) => e.end)];
           return { date, extra: extraHours + already, span: Math.max(...ends) - Math.min(...starts), start: Math.min(...starts), end: Math.max(...ends) };
         })
         .filter((x) => x.extra > MAX_EXTRA_PER_DAY)
@@ -469,10 +482,12 @@ function AbsenceForm({ absence, onClose, onSave }: { absence?: Absence; onClose:
     if (cover === 'external' && !external.trim()) return setError('Informe o nome de quem cobre.');
     const id = absence?.id ?? newId('abs');
     const substitute = cover === 'team' ? { asbId: subId } : cover === 'external' ? { externalName: external.trim() } : undefined;
-    const extras: ExtraShift[] =
-      cover === 'team' && createExtra
+    const extras: ExtraShift[] = [
+      ...keptPast,
+      ...(cover === 'team' && createExtra
         ? needed.map((n) => ({ id: newId('hx'), asbId: subId, date: n.date, start: n.start, end: n.end, note: `cobre ${absentName}`, absenceId: id }))
-        : [];
+        : []),
+    ];
     onSave({ id, asbId, from, to, reason, substitute }, extras);
   };
 
@@ -545,6 +560,7 @@ function AbsenceForm({ absence, onClose, onSave }: { absence?: Absence; onClose:
           <select value={subId} onChange={(e) => setSubId(e.target.value)}>
             <option value="">Escolha...</option>
             {active.filter((a) => a.id !== asbId).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            {subId && !active.some((a) => a.id === subId) && sub && <option value={subId}>{sub.name} (fora da equipe hoje)</option>}
           </select>
         </Field>
       )}
@@ -554,9 +570,16 @@ function AbsenceForm({ absence, onClose, onSave }: { absence?: Absence; onClose:
           <span>
             Criar hora extra para <strong>{sub?.name}</strong> e cobrir o que fica fora do contrato dela:{' '}
             {needed.map((n) => `${formatDayMonth(n.date)} ${formatRange(n.start, n.end)}`).join('; ')}.
-            {absence && linked.length > 0 && <span className="muted small"> As horas extras que esta ausência já tinha são refeitas.</span>}
+            {absence && linked.length > keptPast.length && (
+              <span className="muted small"> As horas extras que esta ausência já tinha{keptPast.length > 0 ? ' de hoje em diante' : ''} são refeitas.</span>
+            )}
           </span>
         </label>
+      )}
+      {keptPast.length > 0 && (
+        <p className="muted small">
+          As {keptPast.length} hora{keptPast.length > 1 ? 's' : ''} extra{keptPast.length > 1 ? 's' : ''} de dias que já passaram ({keptPast.map((e) => formatDayMonth(e.date)).join(', ')}) ficam como estão.
+        </p>
       )}
       {cover === 'team' && needed.length > 0 && longDays.length > 0 && (
         <div className="note warn">

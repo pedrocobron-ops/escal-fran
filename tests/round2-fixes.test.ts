@@ -142,12 +142,12 @@ describe('rodízio no mês', () => {
     let d = seed();
     d.historySince = '2026-09-01';
     const task = d.tasks.find((t) => t.assignment.mode === 'rotation' && t.assignment.period === 'week')!;
-    const before = monthRotation(d, task, 2026, 9)!.weeks.map((w) => w.titularId);
+    const before = monthRotation(d, task, 2026, 9, '2026-09-27')!.weeks.map((w) => w.titularId);
     d = change(d, '2026-09-28', (x) => {
       const t = x.tasks.find((y) => y.id === task.id)!;
       if (t.assignment.mode === 'rotation') t.assignment.order = [...t.assignment.order].reverse();
     });
-    const after = monthRotation(d, d.tasks.find((t) => t.id === task.id)!, 2026, 9)!.weeks.map((w) => w.titularId);
+    const after = monthRotation(d, d.tasks.find((t) => t.id === task.id)!, 2026, 9, '2026-09-28')!.weeks.map((w) => w.titularId);
     expect(after.slice(0, 4)).toEqual(before.slice(0, 4)); // semanas de 01/09 a 25/09
     expect(after[4]).not.toBe(before[4]); // semana de 28/09 já usa a ordem nova
   });

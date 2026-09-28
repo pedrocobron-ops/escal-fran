@@ -177,7 +177,11 @@ export function repairBackup(json: string): RepairReport {
   if (r.dayOverrides !== undefined) r.dayOverrides = keep('dayOverrides', 'ajuste de dia', (x) => isStr(x.id) && isStr(x.asbId) && isIso(x.date) && isNum(x.hour) && isStr(x.kind) && [...SLOT_KINDS, 'livre'].includes(x.kind));
   if (r.history !== undefined) r.history = keep('history', 'registro de histórico', (x) => isIso(x.until));
   if (r.closedDates !== undefined) r.closedDates = keep('closedDates', 'dia fechado', (x) => isIso(x.date) && (x.note === undefined || isStr(x.note)));
-  if (r.historySince !== undefined && !isIso(r.historySince)) delete r.historySince;
+  if (r.historySince !== undefined && !isIso(r.historySince)) {
+    delete r.historySince;
+    removed.push('data de início do histórico era inválida (passou a ser hoje)');
+  }
+  if (r.protese !== undefined) r.protese = keep('protese', 'registro da Prótese', (x) => isStr(x.dentistId) && isStr(x.asbId) && isIso(x.since));
   if (!isArray(r.openDays)) r.openDays = [1, 2, 3, 4, 5];
   return { data: parseBackup(JSON.stringify(r)), removed };
 }
@@ -274,6 +278,11 @@ export function parseBackup(json: string): AppData {
   if (raw.history !== undefined) {
     need(isArray(raw.history), 'O campo "history" precisa ser uma lista.');
     (raw.history as unknown[]).forEach((h, i) => need(isRecord(h) && isIso(h.until), `Registro de histórico ${i + 1} sem data.`));
+  }
+  if (raw.historySince !== undefined) need(isIso(raw.historySince), 'A data de início do histórico é inválida.');
+  if (raw.protese !== undefined) {
+    need(isArray(raw.protese), 'O campo "protese" precisa ser uma lista.');
+    (raw.protese as unknown[]).forEach((p, i) => need(isRecord(p) && isStr(p.dentistId) && isStr(p.asbId) && isIso(p.since), `Registro da Prótese ${i + 1} com data inválida.`));
   }
   if (raw.closedDates !== undefined) {
     need(isArray(raw.closedDates), 'O campo "closedDates" precisa ser uma lista.');

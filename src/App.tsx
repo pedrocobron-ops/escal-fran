@@ -5,6 +5,7 @@ import { useStore } from './store/useStore';
 import { ConfirmProvider } from './ui/common/Modal';
 import { ErrorBoundary } from './ui/common/ErrorBoundary';
 import { RecoveryScreen } from './ui/common/RecoveryScreen';
+import { UndoRedo } from './ui/common/UndoRedo';
 import { diffDays, todayIso } from './domain';
 import { ROUTES, href, useHashRoute, type Route } from './ui/router';
 import { Board } from './ui/board/Board';
@@ -37,7 +38,9 @@ export function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
-      if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+      // Em campos de texto o Ctrl+Z é o do próprio campo; em caixas de marcar e listas, é o do app.
+      const typing = target && (target.tagName === 'TEXTAREA' || (target.tagName === 'INPUT' && !['checkbox', 'radio', 'button'].includes((target as HTMLInputElement).type)));
+      if (typing) return;
       if (!(e.ctrlKey || e.metaKey)) return;
       const k = e.key.toLowerCase();
       if (k === 'z' && !e.shiftKey) { e.preventDefault(); useStore.getState().undo(); }
@@ -71,6 +74,7 @@ export function App() {
           ))}
         </nav>
         <SaveIndicator />
+        {loaded && !recovering && <UndoRedo />}
       </header>
       {loaded && !recovering && <Notices />}
       {loaded && !recovering && <BackupReminder />}
@@ -98,6 +102,7 @@ function Notices() {
   const firstUse = useStore((s) => s.firstUse);
   const blocked = useStore((s) => s.storageBlocked);
   const external = useStore((s) => s.externalUpdateAt);
+  const lostLocal = useStore((s) => s.externalLostLocal);
   const dismiss = useStore((s) => s.dismissNotice);
   return (
     <>
@@ -122,7 +127,10 @@ function Notices() {
       )}
       {external && (
         <div className="backup-bar" role="status">
-          <span>Às {external}, a escala foi alterada em outra aba ou janela. Esta tela já mostra a versão nova.</span>
+          <span>
+            Às {external}, a escala foi alterada em outra aba ou janela. Esta tela já mostra a versão nova.
+            {lostLocal && ' A mudança que você fez aqui no mesmo instante não entrou: confira e refaça se precisar.'}
+          </span>
           <span className="spacer" />
           <button className="btn sm icon" onClick={() => dismiss('externalUpdateAt')} aria-label="Fechar aviso">×</button>
         </div>

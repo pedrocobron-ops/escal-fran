@@ -16,6 +16,9 @@ export function TasksScreen() {
   const [date, setDate] = useState(todayIso());
   const [editing, setEditing] = useState<Task | 'new' | null>(null);
   const colors = useMemo(() => colorMap(data.asbs), [data.asbs]);
+  // Num dia passado, as tarefas como eram nesse dia (inclusive as removidas depois).
+  const past = date < todayIso();
+  const tasks = past ? dataForDate(data, date).tasks : data.tasks;
 
   const remove = async (t: Task) => {
     const ok = await confirm({ title: 'Remover tarefa?', message: <>A tarefa <strong>{t.name}</strong> será removida.</>, confirmLabel: 'Remover', danger: true });
@@ -32,9 +35,14 @@ export function TasksScreen() {
         <span className="muted">{WEEKDAY_LABEL[weekdayOf(date)]}</span>
         <button className="btn primary" onClick={() => setEditing('new')}>Nova tarefa</button>
       </div>
+      {past && (
+        <p className="note">
+          Dia passado: as tarefas aparecem como estavam em {formatDate(date)} (quem fazia e a ordem dos rodízios). Para mudar alguma, escolha hoje ou uma data futura.
+        </p>
+      )}
       <div className="cards">
-        {data.tasks.map((t) => (
-          <TaskCard key={t.id} task={t} date={date} colors={colors} onEdit={() => setEditing(t)} onRemove={() => remove(t)} />
+        {tasks.map((t) => (
+          <TaskCard key={t.id} task={t} date={date} colors={colors} readOnly={past} onEdit={() => setEditing(t)} onRemove={() => remove(t)} />
         ))}
       </div>
       {editing && (
@@ -59,7 +67,7 @@ function personLabel(data: ReturnType<typeof useData>, p: Person): string {
   return p.type === 'asb' ? (findAsbAnywhere(data, p.asbId)?.name ?? '?') : `${p.name} (externa)`;
 }
 
-function TaskCard({ task, date, colors, onEdit, onRemove }: { task: Task; date: string; colors: Map<string, string>; onEdit: () => void; onRemove: () => void }) {
+function TaskCard({ task, date, colors, readOnly, onEdit, onRemove }: { task: Task; date: string; colors: Map<string, string>; readOnly: boolean; onEdit: () => void; onRemove: () => void }) {
   const current = useData();
   const data = dataForDate(current, date);
   const apply = useStore((s) => s.apply);
@@ -93,11 +101,18 @@ function TaskCard({ task, date, colors, onEdit, onRemove }: { task: Task; date: 
           </>
         )}
       </div>
-      {a.mode === 'rotation' && <RotationEditor task={task} assignment={a} date={date} colors={colors} onChange={(next) => apply((d) => { const t = d.tasks.find((x) => x.id === task.id); if (t) t.assignment = next; })} />}
-      <div className="toolbar" style={{ marginTop: 10, marginBottom: 0 }}>
-        <button className="btn sm" onClick={onEdit}>Editar</button>
-        <button className="btn sm danger" onClick={onRemove}>Remover</button>
-      </div>
+      {a.mode === 'rotation' && readOnly && (
+        <p className="muted small" style={{ marginTop: 8 }}>
+          Ordem nesse dia: {a.order.map((id) => findAsbAnywhere(current, id)?.name ?? '?').join(', ')}.
+        </p>
+      )}
+      {a.mode === 'rotation' && !readOnly && <RotationEditor task={task} assignment={a} date={date} colors={colors} onChange={(next) => apply((d) => { const t = d.tasks.find((x) => x.id === task.id); if (t) t.assignment = next; })} />}
+      {!readOnly && (
+        <div className="toolbar" style={{ marginTop: 10, marginBottom: 0 }}>
+          <button className="btn sm" onClick={onEdit}>Editar</button>
+          <button className="btn sm danger" onClick={onRemove}>Remover</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -126,7 +141,7 @@ function RotationEditor({ task, assignment, date, colors, onChange }: { task: Ta
     <div style={{ marginTop: 10 }}>
       <div className="field-row">
         <Field label="Início do rodízio">
-          <DateInput value={assignment.startDate} onChange={(v) => onChange({ ...assignment, startDate: v })} ariaLabel="Início do rodízio" />
+          <DateInput value={assignment.startDate} onChange={(v) => onChange({ ...assignment, startDate: v })} ariaLabel="Início do rodízio" commitOnBlur />
         </Field>
         <Field label="Período">
           <select value={assignment.period} onChange={(e) => onChange({ ...assignment, period: e.target.value as Rotation['period'] })}>
@@ -217,7 +232,7 @@ function TaskForm({ task, onClose, onSave }: { task?: Task; onClose: () => void;
       <Field label="Dias em que acontece"><DaysPicker value={days} onChange={setDays} /></Field>
       <Field label="Quem faz">
         <select value={assignment.mode} onChange={(e) => setMode(e.target.value as TaskMode['mode'])}>
-          <option value="dentist">Segue o dentista (quem estiver escalada com ele)</option>
+          <option value="dentist">Segue o dentista (quem estiver escalada no atendimento)</option>
           <option value="room">Segue a sala (quem estiver na sala num horário)</option>
           <option value="rotation">Rodízio (semanal ou mensal)</option>
           <option value="fixed">Lista fixa</option>

@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import type { Task } from '../../domain';
 import {
   absencesBetween, dataForDate, dentistAbsencesBetween, validExtraShiftsBetween, firstOfMonth, WEEKDAY_SHORT, weekdayOf, formatDate, formatDayMonth, formatMonth, formatRange,
-  findAsbAnywhere, findDentistAnywhere, isExternalSubstitute, isTeamSubstitute, lastOfMonth, monthRotation, weeksOfMonth,
+  findAsbAnywhere, findDentistAnywhere, isExternalSubstitute, isTeamSubstitute, lastOfMonth, monthRotation, rotationTasksInMonth, weeksOfMonth,
 } from '../../domain';
 import { useData } from '../../store/useStore';
 import { colorMap } from '../colors';
@@ -19,7 +19,7 @@ export function MonthScreen() {
   const colors = useMemo(() => colorMap(data.asbs), [data.asbs]);
   const name = (id: string) => findAsbAnywhere(data, id)?.name ?? '?';
   const weeks = weeksOfMonth(ym.year, ym.month);
-  const rotations = data.tasks.filter((t): t is Task & { assignment: { mode: 'rotation' } } => t.assignment.mode === 'rotation');
+  const rotations = rotationTasksInMonth(current, ym.year, ym.month).filter((t): t is Task & { assignment: { mode: 'rotation' } } => t.assignment.mode === 'rotation');
   const weekly = rotations.filter((t) => t.assignment.period === 'week');
   const monthly = rotations.filter((t) => t.assignment.period === 'month');
   const first = firstOfMonth(ym.year, ym.month);

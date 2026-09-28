@@ -50,9 +50,32 @@ export function DaysPicker({ value, onChange, allowed }: { value: number[]; onCh
  * Campo de data que só avisa quando a data está completa e válida (ano entre 2000
  * e 2100). Enquanto a pessoa digita o ano, o valor parcial fica só no campo.
  */
-export function DateInput({ value, onChange, ariaLabel, min }: { value: string; onChange: (iso: string) => void; ariaLabel?: string; min?: string }) {
+/**
+ * Campo de data que nunca repassa data inválida. Enquanto a pessoa digita o ano, o
+ * navegador passa por valores intermediários (ex.: 2022 no meio de 20227): com
+ * `commitOnBlur`, o valor só é usado ao sair do campo ou teclar Enter; `onValidity`
+ * avisa quando o que está escrito não é uma data válida (para desabilitar o botão).
+ */
+export function DateInput({
+  value, onChange, ariaLabel, min, commitOnBlur, onValidity,
+}: {
+  value: string;
+  onChange: (iso: string) => void;
+  ariaLabel?: string;
+  min?: string;
+  commitOnBlur?: boolean;
+  onValidity?: (valid: boolean) => void;
+}) {
   const [text, setText] = useState(value);
   useEffect(() => setText(value), [value]);
+  const commit = () => {
+    if (isValidIso(text)) {
+      if (text !== value) onChange(text);
+    } else {
+      setText(value);
+      onValidity?.(true);
+    }
+  };
   return (
     <input
       type="date"
@@ -60,10 +83,13 @@ export function DateInput({ value, onChange, ariaLabel, min }: { value: string; 
       min={min}
       aria-label={ariaLabel}
       onChange={(e) => {
-        setText(e.target.value);
-        if (isValidIso(e.target.value)) onChange(e.target.value);
+        const v = e.target.value;
+        setText(v);
+        onValidity?.(isValidIso(v));
+        if (!commitOnBlur && isValidIso(v)) onChange(v);
       }}
-      onBlur={() => { if (!isValidIso(text)) setText(value); }}
+      onKeyDown={(e) => { if (e.key === 'Enter' && commitOnBlur) commit(); }}
+      onBlur={commitOnBlur ? commit : () => { if (!isValidIso(text)) { setText(value); onValidity?.(true); } }}
     />
   );
 }

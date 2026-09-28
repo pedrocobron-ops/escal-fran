@@ -82,6 +82,11 @@ function needsCover(kind: Slot['kind']): boolean {
   return kind === 'sala' || kind === 'cme' || kind === 'almox';
 }
 
+/** Quantos horários (ASB e hora) têm ajuste: uma hora com duas salas conta uma vez. */
+export function adjustedSlotCount(overrides: Array<{ asbId: string; hour: number }>): number {
+  return new Set(overrides.map((o) => `${o.asbId}@${o.hour}`)).size;
+}
+
 /**
  * Escala efetiva de um dia: parte da base, tira ausentes, aplica substitutas,
  * aplica os ajustes do dia e remaneja automaticamente ASBs livres (dentista de

@@ -77,7 +77,7 @@ export function SettingsScreen() {
       const parsed = parseBackup(await file.text());
       const ok = await confirm({
         title: 'Importar backup?',
-        message: <>O arquivo <strong>{file.name}</strong> tem {parsed.asbs.length} ASBs, {parsed.dentists.length} dentistas e {parsed.base.slots.length} fichas. Ele substitui tudo o que está salvo agora (dá para desfazer com Ctrl+Z).</>,
+        message: <>O arquivo <strong>{file.name}</strong> tem {parsed.asbs.length} ASBs, {parsed.dentists.length} dentistas e {parsed.base.slots.length} fichas. Ele substitui tudo o que está salvo agora (dá para desfazer no botão Desfazer, no topo).</>,
         confirmLabel: 'Importar',
       });
       if (ok) {
@@ -94,7 +94,7 @@ export function SettingsScreen() {
   const reset = async () => {
     const ok = await confirm({
       title: 'Voltar para a escala inicial?',
-      message: 'Tudo o que foi alterado (quadro, equipe, tarefas, ausências, horas extras, folgas de dentista e o histórico dos dias passados) volta ao que veio dos documentos do CEO. Exporte um backup antes se quiser guardar. Dá para desfazer com Ctrl+Z enquanto a página estiver aberta.',
+      message: 'Tudo o que foi alterado (quadro, equipe, tarefas, ausências, horas extras, folgas de dentista e o histórico dos dias passados) volta ao que veio dos documentos do CEO. Exporte um backup antes se quiser guardar. Dá para desfazer no botão Desfazer, no topo, enquanto a página estiver aberta.',
       confirmLabel: 'Voltar para a inicial',
       danger: true,
     });
@@ -181,13 +181,14 @@ function ClosedDates() {
   const apply = useStore((s) => s.apply);
   const today = todayIso();
   const [date, setDate] = useState(today);
+  const [dateOk, setDateOk] = useState(true);
   const [note, setNote] = useState('');
   const [showPast, setShowPast] = useState(false);
   const list = [...(data.closedDates ?? [])].sort((a, b) => a.date.localeCompare(b.date));
   const visible = showPast ? list : list.filter((c) => c.date >= today);
   const exists = list.some((c) => c.date === date);
   const add = () => {
-    if (!isValidIso(date) || exists) return;
+    if (!dateOk || !isValidIso(date) || exists) return;
     apply((x) => {
       x.closedDates = [...(x.closedDates ?? []), { date, ...(note.trim() ? { note: note.trim() } : {}) }].sort((a, b) => a.date.localeCompare(b.date));
     });
@@ -202,14 +203,14 @@ function ClosedDates() {
       <div className="field-row" style={{ alignItems: 'flex-end' }}>
         <div className="field" style={{ flex: '0 0 auto' }}>
           <label>Data</label>
-          <DateInput value={date} onChange={setDate} ariaLabel="Data fechada" />
+          <DateInput value={date} onChange={setDate} onValidity={setDateOk} ariaLabel="Data fechada" />
         </div>
         <div className="field">
           <label>Motivo (opcional)</label>
           <input value={note} maxLength={60} placeholder="Ex.: Feriado municipal" onChange={(e) => setNote(e.target.value)} />
         </div>
         <div className="field" style={{ flex: '0 0 auto' }}>
-          <button className="btn primary" onClick={add} disabled={exists}>{exists ? 'Já cadastrada' : 'Adicionar'}</button>
+          <button className="btn primary" onClick={add} disabled={exists || !dateOk}>{!dateOk ? 'Data inválida' : exists ? 'Já cadastrada' : 'Adicionar'}</button>
         </div>
       </div>
       {visible.length > 0 ? (

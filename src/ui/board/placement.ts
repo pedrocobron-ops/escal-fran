@@ -27,7 +27,8 @@ export const isRoomEntry = (x: CellTarget) => !!x.roomId && (x.kind === 'sala' |
  * só aquela ficha muda: os outros lugares da ASB nessa hora ficam como estavam.
  */
 export function keptAt(p: Placement, h: number, current: CellTarget[]): CellTarget[] {
-  const { target, orig } = p;
+  const { target } = p;
+  const orig = originOf(p);
   const origT: CellTarget | undefined = orig ? { kind: orig.kind, roomId: orig.roomId } : undefined;
   const rest = current.filter((e) => !sameTarget(e, target) && !(origT && orig && h === orig.hour && sameTarget(e, origT)));
   if (orig && h === orig.hour) return rest;
@@ -35,9 +36,18 @@ export function keptAt(p: Placement, h: number, current: CellTarget[]): CellTarg
   return rest.filter((e) => isRoomEntry(e) && e.roomId !== target.roomId);
 }
 
+/**
+ * "Cobrir as duas" (additive) é copiar: a ficha arrastada continua onde estava.
+ * Nos outros casos, a ficha arrastada sai do lugar de origem.
+ */
+function originOf(p: Placement): Origin | undefined {
+  return p.additive ? undefined : p.orig;
+}
+
 /** Aplica na escala base. */
 export function placeInBase(d: AppData, p: Placement): void {
-  const { asbId, hours, target, orig } = p;
+  const { asbId, hours, target } = p;
+  const orig = originOf(p);
   if (orig && !hours.includes(orig.hour)) removeSlotAt(d, asbId, orig.hour, orig.kind, orig.roomId);
   for (const h of hours) setBaseAt(d, asbId, h, [...keptAt(p, h, baseEntriesAt(d, asbId, h)), target]);
 }
@@ -47,7 +57,8 @@ export function placeInBase(d: AppData, p: Placement): void {
  * efetivo (antes da mudança); `hold` marca que o app não deve remanejá-la ali.
  */
 export function placeInDay(d: AppData, date: IsoDate, p: Placement, entriesAt: (hour: number) => CellTarget[], hold: boolean): void {
-  const { asbId, hours, target, orig } = p;
+  const { asbId, hours, target } = p;
+  const orig = originOf(p);
   if (orig && !hours.includes(orig.hour)) {
     const origT: CellTarget = { kind: orig.kind, roomId: orig.roomId };
     setDaySlots(d, date, asbId, [orig.hour], entriesAt(orig.hour).filter((e) => !sameTarget(e, origT)), { hold });

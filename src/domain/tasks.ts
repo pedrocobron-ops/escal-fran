@@ -1,7 +1,7 @@
 // Responsável por tarefa numa data (5.3) e rodízios por mês (5.4).
 
 import type { AppData, EffectiveDay, Id, IsoDate, Person, Task, TaskMode } from './types';
-import { mod, monthsSince, weekdayOf, weeksOfMonth, weeksSince, type MonthWeek } from './dates';
+import { lastOfMonth, mod, monthsSince, todayIso, weekdayOf, weeksOfMonth, weeksSince, type MonthWeek } from './dates';
 import { absenceFor, isExternalSubstitute, isTeamSubstitute } from './absences';
 import { effectiveDay, isOpenOn } from './schedule';
 import { dataForDate } from './history';
@@ -113,8 +113,8 @@ export function resolveTask(current: AppData, taskNow: Task, date: IsoDate, day?
           ...base,
           holders: usual,
           reason: usual.length > 0
-            ? `${dentist.name} está de folga; fica com quem normalmente está com ele: ${usual.map((p) => personName(data, p)).join(' e ')}.`
-            : `${dentist.name} está de folga e quem normalmente está com ele também não veio.`,
+            ? `${dentist.name} está de folga; fica com quem normalmente trabalha nesse atendimento: ${usual.map((p) => personName(data, p)).join(' e ')}.`
+            : `${dentist.name} está de folga e quem normalmente trabalha nesse atendimento também não veio.`,
         };
       }
       if (!eff.dentists.some((d) => d.id === dentist.id)) {
@@ -191,26 +191,27 @@ export interface MonthRotation {
 
 /**
  * Titulares dos rodízios nas semanas do mês (5.4). Cada semana usa o rodízio como
- * estava nela (mudar a ordem hoje não reescreve as semanas que já passaram), e
- * semanas sem nenhum dia da tarefa dentro do mês ficam de fora.
+ * estava no fim dela (ou hoje, na semana corrente), igual ao que Tarefas mostra para
+ * esses dias; mudar a ordem hoje não reescreve as semanas que já passaram. Semanas sem
+ * nenhum dia da tarefa dentro do mês ficam de fora.
  */
-export function monthRotation(current: AppData, task: Task, year: number, month: number): MonthRotation | undefined {
+export function monthRotation(current: AppData, task: Task, year: number, month: number, today: IsoDate = todayIso()): MonthRotation | undefined {
   if (task.assignment.mode !== 'rotation') return undefined;
   const weeks = weeksOfMonth(year, month);
   const asOf = (date: IsoDate) => {
-    const t = dataForDate(current, date).tasks.find((x) => x.id === task.id);
+    const t = dataForDate(current, date < today ? date : today).tasks.find((x) => x.id === task.id);
     return t && t.assignment.mode === 'rotation' ? t.assignment : undefined;
   };
   if (task.assignment.period === 'month') {
     const first = weeks[0]?.days[0] ?? `${year}-${String(month).padStart(2, '0')}-01`;
-    const a = asOf(first) ?? task.assignment;
-    return { taskId: task.id, period: 'month', weeks: [], monthTitularId: rotationTitular(a, first) };
+    const a = asOf(lastOfMonth(year, month));
+    return a ? { taskId: task.id, period: 'month', weeks: [], monthTitularId: rotationTitular(a, first) } : undefined;
   }
   const entries: RotationWeekEntry[] = [];
   for (const week of weeks) {
     const taskDays = week.days.filter((d) => task.days.includes(weekdayOf(d)));
     if (taskDays.length === 0) continue;
-    const a = asOf(taskDays[0]);
+    const a = asOf(taskDays[taskDays.length - 1]);
     if (!a) continue;
     const titularId = rotationTitular(a, week.monday);
     if (!titularId) continue;
@@ -218,4 +219,24 @@ export function monthRotation(current: AppData, task: Task, year: number, month:
     entries.push({ week, titularId, absentDays });
   }
   return { taskId: task.id, period: 'week', weeks: entries };
+}
+
+/**
+ * Rodízios que existiram em algum momento do mês (um removido no meio do mês continua
+ * aparecendo nas semanas em que existia). Vale a versão mais recente de cada um.
+ */
+export function rotationTasksInMonth(current: AppData, year: number, month: number, today: IsoDate = todayIso()): Task[] {
+  const byId = new Map<string, Task>();
+  const dates = [...weeksOfMonth(year, month).map((w) => w.days[w.days.length - 1]), lastOfMonth(year, month)];
+  for (const d of dates) {
+    for (const t of dataForDate(current, d < today ? d : today).tasks) {
+      if (t.assignment.mode === 'rotation') byId.set(t.id, t);
+    }
+  }
+  const order = current.tasks.map((t) => t.id);
+  return [...byId.values()].sort((a, b) => {
+    const ia = order.indexOf(a.id);
+    const ib = order.indexOf(b.id);
+    return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
+  });
 }

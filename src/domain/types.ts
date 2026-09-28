@@ -110,6 +110,8 @@ export interface ExtraShift {
   note?: string;
   /** Quando a hora extra foi criada para cobrir uma ausência, o id dela. */
   absenceId?: Id;
+  /** Registrada soltando a ficha fora do horário no Modo Dia (sai junto com "Limpar ajustes do dia"). */
+  fromBoard?: boolean;
 }
 
 /** Folga ou ausência de dentista: nesses dias ele não atende e a ASB dele fica livre. */

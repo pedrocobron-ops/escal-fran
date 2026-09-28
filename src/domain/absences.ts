@@ -1,5 +1,6 @@
 import type { Absence, AppData, DentistAbsence, ExtraShift, Id, IsoDate } from './types';
-import { isBetween } from './dates';
+import { isBetween, weekdayOf } from './dates';
+import { dataForDate } from './history';
 
 /** Ausências que valem numa data. */
 export function absencesOn(data: Pick<AppData, 'absences'>, date: IsoDate): Absence[] {
@@ -60,8 +61,18 @@ export function extraShiftsBetween(data: Pick<AppData, 'extraShifts'>, from: Iso
 }
 
 /** Horas extras que valem: tira as de dias em que a própria ASB está ausente. */
-export function validExtraShiftsBetween(data: Pick<AppData, 'extraShifts' | 'absences'>, from: IsoDate, to: IsoDate): ExtraShift[] {
-  return extraShiftsBetween(data, from, to).filter((e) => !absenceFor(data, e.asbId, e.date));
+/**
+ * Horas extras que valem no período: sem os dias em que a ASB está ausente e sem os
+ * dias em que o CEO não abre (feriado, dia fechado, dia sem funcionamento).
+ */
+export function validExtraShiftsBetween(data: AppData, from: IsoDate, to: IsoDate): ExtraShift[] {
+  return extraShiftsBetween(data, from, to).filter((e) => !absenceFor(data, e.asbId, e.date) && ceoOpenOn(data, e.date));
+}
+
+/** O CEO abre nessa data? (mesma regra de isOpenOn, sem depender de schedule.ts) */
+export function ceoOpenOn(data: AppData, date: IsoDate): boolean {
+  const d = dataForDate(data, date);
+  return d.openDays.includes(weekdayOf(date)) && !(d.closedDates ?? []).some((c) => c.date === date);
 }
 
 /** Horas extras da mesma ASB que se sobrepõem a um horário numa data. */

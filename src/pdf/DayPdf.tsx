@@ -1,6 +1,7 @@
 import { Document, Page, Text, View } from '@react-pdf/renderer';
 import type { DayPdfModel } from './model';
 import { pdfStyles as s } from './styles';
+import { AsbText } from './MonthPdf';
 
 export function DayPdf({ m }: { m: DayPdfModel }) {
   return (
@@ -61,7 +62,7 @@ export function DayPdf({ m }: { m: DayPdfModel }) {
               {r.cells.map((c, i) => (
                 <View key={i} style={s.cell}>
                   {c.dentist ? <Text style={[s.small, c.dentist === 'sala vazia' ? s.muted : {}]}>{c.dentist}</Text> : null}
-                  {c.asb ? <Text style={c.asb.startsWith('SEM ASB') ? s.warn : s.bold}>{c.asb}</Text> : null}
+                  {c.asb ? <AsbText text={c.asb} /> : null}
                 </View>
               ))}
             </View>
@@ -83,7 +84,7 @@ export function DayPdf({ m }: { m: DayPdfModel }) {
               <Text style={[s.cell, s.bold, { flexBasis: 70, flexGrow: 0 }]}>{r.name}</Text>
               <Text style={[s.cell, { flexBasis: 60, flexGrow: 0 }]}>{r.contract}</Text>
               <Text style={s.cell}>{r.morning}</Text>
-              <Text style={[s.cell, { flexBasis: 60, flexGrow: 0 }]}>{r.lunch}</Text>
+              <Text style={[s.cell, { flexBasis: 60, flexGrow: 0 }, r.lunch === 'sem bloco' ? s.warn : {}]}>{r.lunch}</Text>
               <Text style={s.cell}>{r.afternoon}</Text>
             </View>
           ))}
@@ -115,7 +116,7 @@ export function DayPdf({ m }: { m: DayPdfModel }) {
 
         {m.alerts.length > 0 && (
           <View>
-            <Text style={s.h2}>Alertas</Text>
+            <Text style={s.h2} minPresenceAhead={40}>Alertas</Text>
             {m.alerts.map((a, i) => (
               <View key={i} style={s.bullet}>
                 <Text style={s.bulletDot}>•</Text>

@@ -20,7 +20,14 @@ function parse(): Route {
 export function useHashRoute(): Route {
   const [route, setRoute] = useState<Route>(parse);
   useEffect(() => {
-    const onChange = () => setRoute(parse());
+    // Ao trocar de tela, começa do topo (senão a tela nova abre rolada como a anterior).
+    const onChange = () => {
+      const next = parse();
+      setRoute((prev) => {
+        if (prev !== next) window.scrollTo(0, 0);
+        return next;
+      });
+    };
     window.addEventListener('hashchange', onChange);
     return () => window.removeEventListener('hashchange', onChange);
   }, []);

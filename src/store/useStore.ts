@@ -50,6 +50,8 @@ interface StoreState {
   storageBlocked: boolean;
   /** Hora em que esta aba recebeu mudanças feitas em outra aba. */
   externalUpdateAt: string | null;
+  /** A última mudança feita aqui foi trocada pela da outra aba (as duas no mesmo instante). */
+  externalLostLocal: boolean;
   dismissNotice(which: 'firstUse' | 'externalUpdateAt'): void;
 }
 
@@ -73,9 +75,21 @@ function clock(now: Date = new Date()): string {
   return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 }
 
+/** Próximos registros da Prótese sem derrubar a abertura se algum registro salvo estiver estranho. */
+function safeProtese(data: AppData): AppData['protese'] {
+  try {
+    return nextProteseRecords(data, todayIso());
+  } catch {
+    return data.protese ?? [];
+  }
+}
+
 export const useStore = create<StoreState>((set, get) => {
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   let pending: AppData | null = null;
+  // Estados que vieram de "substituir tudo" (importar backup, voltar à escala inicial).
+  // Desfazer um desses devolve também o histórico de antes; nos outros, o histórico segue a linha do tempo.
+  const replacedStates = new WeakSet<AppData>();
 
   async function saveNow(data: AppData) {
     const { adapter } = get();
@@ -139,9 +153,10 @@ export const useStore = create<StoreState>((set, get) => {
     firstUse: false,
     storageBlocked: false,
     externalUpdateAt: null,
+    externalLostLocal: false,
 
     dismissNotice(which) {
-      set(which === 'firstUse' ? { firstUse: false } : { externalUpdateAt: null });
+      set(which === 'firstUse' ? { firstUse: false } : { externalUpdateAt: null, externalLostLocal: false });
     },
 
     async init(adapter, opts = {}) {
@@ -152,7 +167,7 @@ export const useStore = create<StoreState>((set, get) => {
         return;
       }
       const { data, fromSeed } = loaded;
-      data.protese = nextProteseRecords(data, todayIso());
+      data.protese = safeProtese(data);
       const newSince = !data.historySince;
       if (newSince) data.historySince = todayIso();
       set({ adapter, data, loaded: true, past: [], future: [], firstUse: fromSeed });
@@ -160,10 +175,12 @@ export const useStore = create<StoreState>((set, get) => {
       // Outra aba gravou: esta aba passa a mostrar o que foi gravado, em vez de apagar
       // aquilo na próxima mudança. O desfazer desta aba é zerado para não voltar por cima.
       adapter.subscribe?.((external) => {
+        // Se havia uma mudança daqui ainda sendo gravada, ela é trocada pela da outra aba: avisa.
+        const lostLocal = pending !== null;
         if (saveTimer) clearTimeout(saveTimer);
         saveTimer = null;
         pending = null;
-        set({ data: external, past: [], future: [], saving: false, externalUpdateAt: clock() });
+        set({ data: external, past: [], future: [], saving: false, externalUpdateAt: clock(), externalLostLocal: lostLocal });
       });
       // Pede ao navegador para não apagar os dados sozinho (quando ele permite).
       try {
@@ -189,8 +206,9 @@ export const useStore = create<StoreState>((set, get) => {
 
     replace(data) {
       const next = structuredClone(data);
-      next.protese = nextProteseRecords(next, todayIso());
+      next.protese = safeProtese(next);
       if (!next.historySince) next.historySince = todayIso();
+      replacedStates.add(next);
       commit(next, { pushHistory: true });
     },
 
@@ -199,7 +217,7 @@ export const useStore = create<StoreState>((set, get) => {
       if (!adapter) return;
       if (recovery) await adapter.keepCopy(recovery.raw);
       const next = structuredClone(data);
-      next.protese = nextProteseRecords(next, todayIso());
+      next.protese = safeProtese(next);
       if (!next.historySince) next.historySince = todayIso();
       set({ data: next, recovery: null, past: [], future: [] });
       await saveNow(next);
@@ -215,12 +233,18 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     // Desfazer e refazer contam como mudanças de hoje: o histórico parte do atual, para
-    // um desfazer feito no dia seguinte não apagar como o dia anterior ficou.
+    // um desfazer feito no dia seguinte não apagar como o dia anterior ficou. A exceção é
+    // desfazer uma importação ou a volta à escala inicial: aí o histórico de antes volta inteiro.
     undo() {
       const { past, data, future } = get();
       if (past.length === 0 || !data) return;
-      const prev = { ...past[past.length - 1], history: data.history, historySince: data.historySince };
-      prev.history = recordHistory(data, prev, todayIso());
+      const target = past[past.length - 1];
+      let prev: AppData;
+      if (replacedStates.has(data)) prev = target; // volta tudo como estava antes, histórico inclusive
+      else {
+        prev = { ...target, history: data.history, historySince: data.historySince };
+        prev.history = recordHistory(data, prev, todayIso());
+      }
       set({ data: prev, past: past.slice(0, -1), future: [data, ...future] });
       scheduleSave(prev);
     },
@@ -228,8 +252,13 @@ export const useStore = create<StoreState>((set, get) => {
     redo() {
       const { past, data, future } = get();
       if (future.length === 0 || !data) return;
-      const next = { ...future[0], history: data.history, historySince: data.historySince };
-      next.history = recordHistory(data, next, todayIso());
+      const target = future[0];
+      let next: AppData;
+      if (replacedStates.has(target)) next = target;
+      else {
+        next = { ...target, history: data.history, historySince: data.historySince };
+        next.history = recordHistory(data, next, todayIso());
+      }
       set({ data: next, past: [...past, data], future: future.slice(1) });
       scheduleSave(next);
     },
@@ -322,14 +351,15 @@ export function baseEntriesAt(data: AppData, asbId: Id, hour: number): CellTarge
  */
 export function addExtraHour(draft: AppData, asbId: Id, date: IsoDate, hour: number, note = 'Pelo quadro'): void {
   const list = draft.extraShifts ?? (draft.extraShifts = []);
-  const before = list.find((e) => e.asbId === asbId && e.date === date && e.end === hour);
-  const after = list.find((e) => e.asbId === asbId && e.date === date && e.start === hour + 1);
+  // Só junta com outra hora extra registrada pelo quadro (as do formulário ficam como foram feitas).
+  const before = list.find((e) => e.fromBoard && e.asbId === asbId && e.date === date && e.end === hour);
+  const after = list.find((e) => e.fromBoard && e.asbId === asbId && e.date === date && e.start === hour + 1);
   if (before && after && before !== after) {
     before.end = after.end;
     draft.extraShifts = list.filter((e) => e !== after);
   } else if (before) before.end = hour + 1;
   else if (after) after.start = hour;
-  else list.push({ id: newId('hx'), asbId, date, start: hour, end: hour + 1, note });
+  else list.push({ id: newId('hx'), asbId, date, start: hour, end: hour + 1, note, fromBoard: true });
 }
 
 // ---- Ajustes de um dia (Modo Dia) ----
@@ -354,12 +384,19 @@ export function setDaySlots(draft: AppData, date: IsoDate, asbId: Id, hours: num
   }
 }
 
+/** Tira os ajustes da data e as horas extras registradas pelo quadro nela. */
 export function clearDayOverrides(draft: AppData, date: IsoDate): void {
   draft.dayOverrides = (draft.dayOverrides ?? []).filter((o) => o.date !== date);
+  draft.extraShifts = (draft.extraShifts ?? []).filter((e) => !(e.fromBoard && e.date === date));
+}
+
+/** Horas extras registradas pelo quadro numa data. */
+export function boardExtrasOn(data: AppData, date: IsoDate) {
+  return (data.extraShifts ?? []).filter((e) => e.fromBoard && e.date === date);
 }
 
 export function hasDayOverrides(data: AppData, date: IsoDate): boolean {
-  return (data.dayOverrides ?? []).some((o) => o.date === date);
+  return (data.dayOverrides ?? []).some((o) => o.date === date) || boardExtrasOn(data, date).length > 0;
 }
 
 export function removeSlot(draft: AppData, asbId: Id, hour: number): void {

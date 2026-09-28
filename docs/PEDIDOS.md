@@ -27,4 +27,6 @@ Francisco (responsável técnico do CEO, quem usa o sistema) mandou áudios e me
 - **Feriados e dias fechados** (`closedDates`, em Ajustes): nessas datas o quadro do dia fica vazio, sem alertas, tarefas nem horas extras a pagar.
 - **Quadro**: lembra o modo e a data ao trocar de tela; na escala base avisa o que muda hoje; tocar num dia do calendário abre o Modo Dia nessa data; botão "PDF deste dia".
 - **Duas abas abertas**: a aba que ficou para trás passa a mostrar o que foi gravado na outra, em vez de apagar.
+- **Desfazer e Refazer** no topo de todas as telas (também no celular). Desfazer uma importação ou a volta à escala inicial devolve também o histórico.
+- **Editar uma ausência que já começou** mantém as horas extras dos dias que já passaram (já trabalhadas); só o que ainda vai acontecer é refeito.
 - PDF do mês ganhou "Folgas de dentista do mês" e "Horas extras do mês". PDF do dia lista folgas e horas extras e marca "(remanejada)" e "(extra)".

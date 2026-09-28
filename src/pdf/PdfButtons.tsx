@@ -71,6 +71,7 @@ export function PdfButtons({ ym }: { ym: YearMonth }) {
   const [busy, setBusy] = useState<'month' | 'day' | null>(null);
   const [askDay, setAskDay] = useState(false);
   const [date, setDate] = useState<IsoDate>(todayIso());
+  const [dateOk, setDateOk] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState<Ready | null>(null);
 
@@ -129,11 +130,11 @@ export function PdfButtons({ ym }: { ym: YearMonth }) {
           <p className="muted small">A escala efetiva da data, com ausências e substituições aplicadas. Útil quando alguém falta.</p>
           <div className="field">
             <label>Data</label>
-            <DateInput value={date} onChange={setDate} ariaLabel="Data" />
+            <DateInput value={date} onChange={setDate} onValidity={setDateOk} ariaLabel="Data" />
           </div>
           <div className="modal-actions">
             <button className="btn" onClick={() => setAskDay(false)}>Cancelar</button>
-            <button className="btn primary" onClick={genDay}>Gerar PDF</button>
+            <button className="btn primary" onClick={genDay} disabled={!dateOk}>{dateOk ? 'Gerar PDF' : 'Data inválida'}</button>
           </div>
         </Modal>
       )}
