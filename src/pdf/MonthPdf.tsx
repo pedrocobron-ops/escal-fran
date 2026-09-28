@@ -142,6 +142,48 @@ export function MonthPdf({ m }: { m: MonthPdfModel }) {
           </View>
         )}
 
+        {m.dentistAbsences.length > 0 && (
+          <View wrap={false}>
+            <Text style={s.h2}>{m.absences.length > 0 ? '6' : '5'}. Folgas de dentista do mês</Text>
+            <View style={s.table}>
+              <View style={[s.row, s.head]}>
+                <Text style={s.cell}>Dentista</Text>
+                <Text style={s.cell}>Período</Text>
+                <Text style={s.cell}>Motivo</Text>
+              </View>
+              {m.dentistAbsences.map((a, i) => (
+                <View style={s.row} key={i}>
+                  <Text style={[s.cell, s.bold]}>{a.dentist}</Text>
+                  <Text style={s.cell}>{a.period}</Text>
+                  <Text style={s.cell}>{a.reason}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
+
+        {m.extras.length > 0 && (
+          <View>
+            <Text style={s.h2} minPresenceAhead={40}>{5 + (m.absences.length > 0 ? 1 : 0) + (m.dentistAbsences.length > 0 ? 1 : 0)}. Horas extras do mês</Text>
+            <View style={s.table}>
+              <View style={[s.row, s.head]}>
+                <Text style={s.cell}>ASB</Text>
+                <Text style={s.cell}>Data</Text>
+                <Text style={s.cell}>Horário</Text>
+                <Text style={s.cell}>Obs.</Text>
+              </View>
+              {m.extras.map((e, i) => (
+                <View style={s.row} key={i} wrap={false}>
+                  <Text style={[s.cell, s.bold]}>{e.asb}</Text>
+                  <Text style={s.cell}>{e.date}</Text>
+                  <Text style={s.cell}>{e.hours}</Text>
+                  <Text style={s.cell}>{e.note}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
+
         <Footer text={m.generatedAt} />
       </Page>
     </Document>

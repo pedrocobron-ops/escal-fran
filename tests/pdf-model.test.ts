@@ -93,3 +93,21 @@ describe('PDF do dia com ASB ausente', () => {
     expect(laura).toEqual({ name: 'Laura', contract: '07h–16h', morning: 'Ausente (Férias)', lunch: '-', afternoon: 'Ausente (Férias)' });
   });
 });
+
+describe('PDF com folga de dentista e hora extra', () => {
+  it('mês lista folgas e horas extras; dia mostra sala de folga e remanejada', () => {
+    const d = seed();
+    d.dentistAbsences = [{ id: 'df', dentistId: 'id002', from: '2026-09-14', to: '2026-09-14', reason: 'Folga' }];
+    d.extraShifts = [{ id: 'hx', asbId: ID.nicelia, date: '2026-09-14', start: 10, end: 13, note: 'cobre Laura' }];
+    d.absences.push(absence({ asbId: ID.laura, from: '2026-09-14', to: '2026-09-14', reason: 'Folga' }));
+    const m = monthPdfModel(d, 2026, 9);
+    expect(m.dentistAbsences).toEqual([{ dentist: 'Dra. Victoria', period: '14/09/2026', reason: 'Folga' }]);
+    expect(m.extras).toEqual([{ asb: 'Nicélia', date: 'seg, 14/09/2026', hours: '10h–13h', note: 'cobre Laura' }]);
+    const day = dayPdfModel(d, '2026-09-14');
+    expect(day.notes).toEqual(['Dra. Victoria de folga (Folga), Sala 3 07h–11h.', 'Nicélia faz hora extra 10h–13h (cobre Laura).']);
+    expect(day.rows[1].cells[2]).toEqual({ dentist: 'Dra. Victoria de folga', asb: '' });
+    expect(day.rows[1].cells[0].asb).toBe('ASB: Andrea (remanejada)');
+    expect(day.rows[3].cells[0].asb).toBe('ASB: Andrea (remanejada)');
+    expect(day.alerts.some((a) => a.startsWith('Info: Andrea remanejada da Sala 3 para a Sala 1'))).toBe(true);
+  });
+});

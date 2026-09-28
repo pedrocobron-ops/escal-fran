@@ -96,6 +96,38 @@ export interface ProteseRecord {
   since: IsoDate;
 }
 
+/** Hora extra: a ASB trabalha fora do contrato numa data (entrar mais cedo para pagar hora, por exemplo). */
+export interface ExtraShift {
+  id: Id;
+  asbId: Id;
+  date: IsoDate;
+  start: number;
+  end: number;
+  note?: string;
+}
+
+/** Folga ou ausência de dentista: nesses dias ele não atende e a ASB dele fica livre. */
+export interface DentistAbsence {
+  id: Id;
+  dentistId: Id;
+  from: IsoDate;
+  to: IsoDate;
+  reason: AbsenceReason;
+}
+
+/** `livre` só existe em ajuste de dia: "nesse dia, nessa hora, a ASB não tem atribuição". */
+export type DaySlotKind = SlotKind | 'livre';
+
+/** Ajuste de um dia específico: substitui o que a ASB faria nessa hora na escala base. */
+export interface DaySlot {
+  id: Id;
+  date: IsoDate;
+  asbId: Id;
+  hour: number;
+  kind: DaySlotKind;
+  roomId?: Id;
+}
+
 export interface AppData {
   version: number;
   rooms: Room[];
@@ -109,6 +141,12 @@ export interface AppData {
   openDays: number[];
   /** Opcional: histórico da ASB da Prótese para a regra do mês. */
   protese?: ProteseRecord[];
+  /** Horas extras por data. */
+  extraShifts?: ExtraShift[];
+  /** Folgas e ausências de dentistas. */
+  dentistAbsences?: DentistAbsence[];
+  /** Ajustes feitos no Modo Dia, por data. */
+  dayOverrides?: DaySlot[];
 }
 
 /** Blocos de hora do CEO: 07→08 até 18→19. */
@@ -130,7 +168,9 @@ export const SLOT_KIND_LABEL: Record<SlotKind, string> = {
 /** Quem ocupa um slot no dia: uma ASB da equipe ou uma pessoa externa. */
 export type Person = { type: 'asb'; asbId: Id } | { type: 'external'; name: string };
 
-export type SlotOrigin = 'base' | 'substitute' | 'external';
+/** base: da escala base; substitute: herdado de uma ausente; external: pessoa de fora;
+ *  override: ajuste feito para esse dia; auto: remanejada pelo app (dentista de folga ou hora extra). */
+export type SlotOrigin = 'base' | 'substitute' | 'external' | 'override' | 'auto';
 
 export interface EffectiveSlot {
   hour: number;
@@ -140,6 +180,10 @@ export interface EffectiveSlot {
   origin: SlotOrigin;
   /** Preenchido quando o slot foi herdado de uma ASB ausente. */
   coveringFor?: Id;
+  /** Remanejamento automático: sala de onde a ASB saiu (se estava numa sala). */
+  movedFrom?: Id;
+  /** true quando o bloco está dentro de uma hora extra da ASB nessa data. */
+  extra?: boolean;
 }
 
 /** Slot da ausente que ninguém conseguiu cobrir. */
@@ -164,13 +208,18 @@ export interface EffectiveDay {
   uncovered: UncoveredSlot[];
   /** ASBs ativas e presentes nesse dia. */
   presentAsbIds: Id[];
-  /** Dentistas que atendem nesse dia da semana. */
+  /** Dentistas que atendem nesse dia (dia da semana e sem folga). */
   dentists: Dentist[];
+  /** Dentistas que atenderiam nesse dia da semana mas estão de folga. */
+  dentistsOff: Dentist[];
+  dentistAbsences: DentistAbsence[];
+  extraShifts: ExtraShift[];
+  overrides: DaySlot[];
 }
 
 // ---- Alertas (seção 5.2) ----
 
-export type AlertLevel = 'critico' | 'aviso';
+export type AlertLevel = 'critico' | 'aviso' | 'info';
 
 export type AlertCode =
   | 'sala-sem-asb'
@@ -180,7 +229,11 @@ export type AlertCode =
   | 'duas-asbs-mesma-sala'
   | 'substituta-choque'
   | 'ausente-sem-substituta'
-  | 'protese-trocou-antes-do-mes';
+  | 'protese-trocou-antes-do-mes'
+  | 'asb-duas-salas'
+  | 'hora-extra-sem-atribuicao'
+  | 'dentista-de-folga'
+  | 'remanejada';
 
 export interface Alert {
   level: AlertLevel;

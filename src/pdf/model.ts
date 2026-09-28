@@ -2,7 +2,7 @@
 
 import type { Absence, AppData, Asb, EffectiveDay, IsoDate, Task } from '../domain';
 import {
-  HOURS, OPEN_END, OPEN_START, SLOT_KIND_LABEL, WEEKDAY_LABEL, WEEKDAY_SHORT, absencesBetween, analyze, baseDay, dentistsAt,
+  HOURS, OPEN_END, OPEN_START, SLOT_KIND_LABEL, WEEKDAY_LABEL, WEEKDAY_SHORT, absencesBetween, analyze, baseDay, dentistAbsencesBetween, dentistsAt, extraShiftsBetween,
   effectiveDay, firstOfMonth, formatDate, formatDayMonth, formatMonth, formatRange, isExternalSubstitute, isTeamSubstitute,
   lastOfMonth, monthRotation, resolveTask, todayIso, weekdayOf, weeksOfMonth,
 } from '../domain';
@@ -52,6 +52,8 @@ export interface MonthPdfModel {
   monthlyRows: Array<{ task: string; when: string; holder: string }>;
   rules: string[];
   absences: AbsenceRow[];
+  dentistAbsences: Array<{ dentist: string; period: string; reason: string }>;
+  extras: Array<{ asb: string; date: string; hours: string; note: string }>;
   generatedAt: string;
 }
 
@@ -138,8 +140,11 @@ export function roomRows(data: AppData, day: EffectiveDay): { roomNames: string[
     hour: formatRange(hour, hour + 1),
     cells: rooms.map((room) => {
       const ds = dentistsAt(day.dentists, room.id, hour);
-      const asbs = day.slots.filter((s) => s.kind === 'sala' && s.roomId === room.id && s.hour === hour).map((s) => personLabel(data, s.who));
-      const dentist = ds.length > 0 ? ds.map((d) => `${d.name} (${d.specialty})`).join(', ') : 'sala vazia';
+      const off = dentistsAt(day.dentistsOff, room.id, hour);
+      const asbs = day.slots
+        .filter((s) => s.kind === 'sala' && s.roomId === room.id && s.hour === hour)
+        .map((s) => personLabel(data, s.who) + (s.origin === 'auto' ? ' (remanejada)' : s.extra ? ' (extra)' : ''));
+      const dentist = ds.length > 0 ? ds.map((d) => `${d.name} (${d.specialty})`).join(', ') : off.length > 0 ? `${off.map((d) => d.name).join(', ')} de folga` : 'sala vazia';
       const asb = asbs.length > 0 ? `ASB: ${asbs.join(', ')}` : ds.length > 0 ? 'SEM ASB' : '';
       return { dentist, asb };
     }),
@@ -176,6 +181,18 @@ export function monthPdfModel(data: AppData, year: number, month: number, now: D
   const absences = absencesBetween(data, firstOfMonth(year, month), lastOfMonth(year, month))
     .sort((a, b) => a.from.localeCompare(b.from))
     .map((a) => ({ asb: asbName(data, a.asbId), period: periodLabel(a), reason: a.reason, cover: coverLabel(data, a) }));
+  const first = firstOfMonth(year, month);
+  const last = lastOfMonth(year, month);
+  const dentistAbsences = dentistAbsencesBetween(data, first, last)
+    .sort((a, b) => a.from.localeCompare(b.from))
+    .map((a) => ({
+      dentist: data.dentists.find((d) => d.id === a.dentistId)?.name ?? '?',
+      period: a.from === a.to ? formatDate(a.from) : `${formatDate(a.from)} a ${formatDate(a.to)}`,
+      reason: a.reason,
+    }));
+  const extras = extraShiftsBetween(data, first, last)
+    .sort((a, b) => a.date.localeCompare(b.date) || a.start - b.start)
+    .map((e) => ({ asb: asbName(data, e.asbId), date: `${WEEKDAY_SHORT[weekdayOf(e.date)]}, ${formatDate(e.date)}`, hours: formatRange(e.start, e.end), note: e.note ?? '' }));
   return {
     title: 'Escala mensal de trabalho - CEO',
     monthLabel: formatMonth(year, month),
@@ -188,6 +205,8 @@ export function monthPdfModel(data: AppData, year: number, month: number, now: D
     monthlyRows,
     rules: data.rules,
     absences,
+    dentistAbsences,
+    extras,
     generatedAt: `Gerado em ${formatDate(todayIso(now))} às ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
   };
 }
@@ -198,6 +217,8 @@ export interface DayPdfModel {
   hoursLabel: string;
   open: boolean;
   absences: AbsenceRow[];
+  /** Folgas de dentista e horas extras do dia, em texto. */
+  notes: string[];
   columns: string[];
   rows: Array<{ hour: string; cells: RoomCell[] }>;
   asbRows: AsbRow[];
@@ -222,7 +243,10 @@ export function dayPdfModel(data: AppData, date: IsoDate, now: Date = new Date()
       ...r.cells,
       ...SUPPORT.map((c) => ({
         dentist: '',
-        asb: day.slots.filter((s) => c.kinds.includes(s.kind) && s.hour === HOURS[i]).map((s) => personLabel(data, s.who)).join(', '),
+        asb: day.slots
+          .filter((s) => c.kinds.includes(s.kind) && s.hour === HOURS[i])
+          .map((s) => personLabel(data, s.who) + (s.extra ? ' (extra)' : ''))
+          .join(', '),
       })),
     ],
   }));
@@ -235,13 +259,21 @@ export function dayPdfModel(data: AppData, date: IsoDate, now: Date = new Date()
       holder: r.holders.length > 0 ? r.holders.map((p) => personLabel(data, p)).join(' e ') : r.noSubstitute ? 'sem substituta' : 'ninguém',
       reason: r.reason,
     }));
-  const alerts = analyze(data, day).map((a) => `${a.level === 'critico' ? 'CRÍTICO' : 'Aviso'}: ${a.message}`);
+  const alerts = analyze(data, day).map((a) => `${a.level === 'critico' ? 'CRÍTICO' : a.level === 'aviso' ? 'Aviso' : 'Info'}: ${a.message}`);
+  const notes = [
+    ...day.dentistsOff.map((d) => {
+      const abs = day.dentistAbsences.find((x) => x.dentistId === d.id);
+      return `${d.name} de folga${abs ? ` (${abs.reason})` : ''}, ${data.rooms.find((r) => r.id === d.roomId)?.name ?? ''} ${formatRange(d.start, d.end)}.`;
+    }),
+    ...day.extraShifts.map((e) => `${asbName(data, e.asbId)} faz hora extra ${formatRange(e.start, e.end)}${e.note ? ` (${e.note})` : ''}.`),
+  ];
   return {
     title: 'Escala do dia - CEO',
     dateLabel: `${WEEKDAY_LABEL[weekdayOf(date)]}, ${formatDate(date)}`,
     hoursLabel: openingLabel(data),
     open: day.open,
     absences: day.absences.map((a) => ({ asb: asbName(data, a.asbId), period: periodLabel(a), reason: a.reason, cover: coverLabel(data, a) })),
+    notes,
     columns: [...roomNames, ...SUPPORT.map((c) => c.label)],
     rows: fullRows,
     asbRows: asbRows(data, day),

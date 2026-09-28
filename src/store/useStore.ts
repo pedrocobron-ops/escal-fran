@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AppData, Id, IsoDate, Slot, SlotKind } from '../domain';
+import type { AppData, DaySlot, DaySlotKind, Id, IsoDate, Slot, SlotKind } from '../domain';
 import { canAssign, nextProteseRecords, todayIso } from '../domain';
 import { loadInitial, seedData, type StorageAdapter } from './storage';
 
@@ -168,14 +168,24 @@ export interface CellTarget {
   roomId?: Id;
 }
 
-/** Remove qualquer slot da ASB nessas horas e coloca os novos. Ignora horas fora do contrato. */
-export function setSlots(draft: AppData, asbId: Id, hours: number[], target: CellTarget): number {
+/**
+ * Coloca a ASB nessas horas. Por padrão substitui o que ela tinha na hora;
+ * com `additive` mantém as outras salas (uma ASB cobrindo duas salas) e só
+ * troca almoço. Ignora horas fora do contrato.
+ */
+export function setSlots(draft: AppData, asbId: Id, hours: number[], target: CellTarget, opts: { additive?: boolean } = {}): number {
   const asb = draft.asbs.find((a) => a.id === asbId);
   if (!asb) return 0;
   const valid = hours.filter((h) => canAssign(asb, h));
   if (valid.length === 0) return 0;
   const set = new Set(valid);
-  draft.base.slots = draft.base.slots.filter((s) => !(s.asbId === asbId && set.has(s.hour)));
+  draft.base.slots = draft.base.slots.filter((s) => {
+    if (s.asbId !== asbId || !set.has(s.hour)) return true;
+    if (!opts.additive) return false;
+    // aditivo: some o que é igual ao destino, o almoço e o apoio; salas diferentes ficam
+    if (s.kind === target.kind && s.roomId === target.roomId) return false;
+    return s.kind === 'sala' && target.kind === 'sala';
+  });
   for (const hour of valid) {
     const slot: Slot = { asbId, hour, kind: target.kind };
     if (target.kind === 'sala') slot.roomId = target.roomId;
@@ -185,8 +195,40 @@ export function setSlots(draft: AppData, asbId: Id, hours: number[], target: Cel
   return valid.length;
 }
 
+// ---- Ajustes de um dia (Modo Dia) ----
+
+/** Define exatamente o que a ASB faz nessas horas nessa data. `entries` vazio = livre. */
+export function setDaySlots(draft: AppData, date: IsoDate, asbId: Id, hours: number[], entries: CellTarget[]): void {
+  const set = new Set(hours);
+  draft.dayOverrides = (draft.dayOverrides ?? []).filter((o) => !(o.date === date && o.asbId === asbId && set.has(o.hour)));
+  for (const hour of hours) {
+    if (entries.length === 0) {
+      draft.dayOverrides.push({ id: newId('dia'), date, asbId, hour, kind: 'livre' });
+      continue;
+    }
+    for (const e of entries) {
+      const o: DaySlot = { id: newId('dia'), date, asbId, hour, kind: e.kind as DaySlotKind };
+      if (e.kind === 'sala') o.roomId = e.roomId;
+      draft.dayOverrides.push(o);
+    }
+  }
+}
+
+export function clearDayOverrides(draft: AppData, date: IsoDate): void {
+  draft.dayOverrides = (draft.dayOverrides ?? []).filter((o) => o.date !== date);
+}
+
+export function hasDayOverrides(data: AppData, date: IsoDate): boolean {
+  return (data.dayOverrides ?? []).some((o) => o.date === date);
+}
+
 export function removeSlot(draft: AppData, asbId: Id, hour: number): void {
   draft.base.slots = draft.base.slots.filter((s) => !(s.asbId === asbId && s.hour === hour));
+}
+
+/** Remove só um slot específico (a ASB pode ter mais de um na mesma hora). */
+export function removeSlotAt(draft: AppData, asbId: Id, hour: number, kind: SlotKind, roomId?: Id): void {
+  draft.base.slots = draft.base.slots.filter((s) => !(s.asbId === asbId && s.hour === hour && s.kind === kind && (kind !== 'sala' || s.roomId === roomId)));
 }
 
 export function clearSchedule(draft: AppData): void {
@@ -207,17 +249,21 @@ export function removeAsb(draft: AppData, asbId: Id): void {
     return t;
   });
   draft.protese = (draft.protese ?? []).filter((p) => p.asbId !== asbId);
+  draft.extraShifts = (draft.extraShifts ?? []).filter((e) => e.asbId !== asbId);
+  draft.dayOverrides = (draft.dayOverrides ?? []).filter((o) => o.asbId !== asbId);
 }
 
 export function removeDentist(draft: AppData, dentistId: Id): void {
   draft.dentists = draft.dentists.filter((d) => d.id !== dentistId);
   draft.tasks = draft.tasks.filter((t) => !(t.assignment.mode === 'dentist' && t.assignment.dentistId === dentistId));
   draft.protese = (draft.protese ?? []).filter((p) => p.dentistId !== dentistId);
+  draft.dentistAbsences = (draft.dentistAbsences ?? []).filter((a) => a.dentistId !== dentistId);
 }
 
 export function removeRoom(draft: AppData, roomId: Id): void {
   draft.rooms = draft.rooms.filter((r) => r.id !== roomId);
   draft.base.slots = draft.base.slots.filter((s) => !(s.kind === 'sala' && s.roomId === roomId));
+  draft.dayOverrides = (draft.dayOverrides ?? []).filter((o) => !(o.kind === 'sala' && o.roomId === roomId));
   for (const d of draft.dentists.filter((x) => x.roomId === roomId)) removeDentist(draft, d.id);
   draft.tasks = draft.tasks.filter((t) => !(t.assignment.mode === 'room' && t.assignment.roomId === roomId));
 }

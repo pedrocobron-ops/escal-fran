@@ -14,17 +14,19 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
-import type { Alert, Asb, EffectiveDay, EffectiveSlot, IsoDate } from '../../domain';
+import type { Alert, AppData, Asb, EffectiveDay, EffectiveSlot, IsoDate, SlotKind } from '../../domain';
 import {
-  HOURS, WEEKDAY_LABEL, analyze, baseDay, canAssign, dentistsAt, effectiveDay, formatBlock, formatDate, formatHour, formatRange,
-  isExternalSubstitute, isTeamSubstitute, proteseAlerts, todayIso, validHours, weekdayOf,
+  HOURS, WEEKDAY_LABEL, allowedHours, analyze, baseDay, canAssign, canAssignOn, dentistsAt, effectiveDay, formatBlock, formatDate,
+  formatHour, formatRange, isExternalSubstitute, isTeamSubstitute, proteseAlerts, todayIso, validHours, weekdayOf,
 } from '../../domain';
-import { removeSlot, setSlots, useData, useStore, clearSchedule } from '../../store/useStore';
+import {
+  clearDayOverrides, clearSchedule, hasDayOverrides, removeSlotAt, setDaySlots, setSlots, useData, useStore, type CellTarget,
+} from '../../store/useStore';
 import { colorMap, tint } from '../colors';
 import { useConfirm } from '../common/Modal';
 import { AlertsPanel } from './AlertsPanel';
 import { Chip, ChipOverlay, type DragItem } from './Chip';
-import { RangeDialog } from './RangeDialog';
+import { ConflictDialog, RangeDialog } from './RangeDialog';
 import { cellKey, columnKeyOf, columnsFor, type Column } from './model';
 
 type Mode = 'base' | 'day';
@@ -45,13 +47,25 @@ interface PendingRange {
   asbId: string;
   column: Column;
   fromHour: number;
-  origHour?: number;
+  orig?: DragItem & { type: 'slot' };
+}
+
+interface PendingConflict {
+  asbId: string;
+  column: Column;
+  hour: number;
+  currentRooms: string[];
+  orig?: DragItem & { type: 'slot' };
 }
 
 const collision: CollisionDetection = (args) => {
   const within = pointerWithin(args);
   return within.length > 0 ? within : rectIntersection(args);
 };
+
+function targetOf(column: Column): CellTarget {
+  return column.kind === 'sala' ? { kind: 'sala', roomId: column.roomId } : { kind: column.kind };
+}
 
 export function Board() {
   const data = useData();
@@ -62,6 +76,7 @@ export function Board() {
   const [rangeMode, setRangeMode] = useState(false);
   const [active, setActive] = useState<DragItem | null>(null);
   const [pending, setPending] = useState<PendingRange | null>(null);
+  const [conflict, setConflict] = useState<PendingConflict | null>(null);
   const shiftRef = useRef(false);
 
   useEffect(() => {
@@ -72,14 +87,21 @@ export function Board() {
     return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
   }, []);
 
-  const readOnly = mode === 'day';
+  const isDay = mode === 'day';
   const columns = useMemo(() => columnsFor(data), [data]);
   const colors = useMemo(() => colorMap(data.asbs), [data.asbs]);
   const asbById = useMemo(() => new Map(data.asbs.map((a) => [a.id, a])), [data.asbs]);
-  const day: EffectiveDay = useMemo(() => (mode === 'base' ? baseDay(data) : effectiveDay(data, date)), [data, mode, date]);
+  const day: EffectiveDay = useMemo(() => (isDay ? effectiveDay(data, date) : baseDay(data)), [data, isDay, date]);
   const alerts: Alert[] = useMemo(
-    () => (mode === 'base' ? [...analyze(data, day), ...proteseAlerts(data, todayIso())] : analyze(data, day)),
-    [data, day, mode],
+    () => (isDay ? analyze(data, day) : [...analyze(data, day), ...proteseAlerts(data, todayIso())]),
+    [data, day, isDay],
+  );
+  const readOnly = isDay && !day.open;
+
+  /** Onde a ASB pode ter slot: contrato, ou hora extra no Modo Dia. */
+  const allowedAt = useCallback(
+    (asb: Asb, hour: number) => (isDay ? canAssignOn(asb, hour, day.extraShifts) : canAssign(asb, hour)),
+    [isDay, day.extraShifts],
   );
 
   const slotsByCell = useMemo(() => {
@@ -96,7 +118,7 @@ export function Board() {
   const cellAlerts = useMemo(() => {
     const m = new Map<string, Alert['level']>();
     for (const a of alerts) {
-      if (a.roomId === undefined || a.hour === undefined) continue;
+      if (a.roomId === undefined || a.hour === undefined || a.level === 'info') continue;
       const k = cellKey(`sala:${a.roomId}`, a.hour);
       const cur = m.get(k);
       if (cur !== 'critico') m.set(k, a.level);
@@ -114,6 +136,55 @@ export function Board() {
     useSensor(KeyboardSensor),
   );
 
+  /** O que a ASB faz nessa hora hoje (Modo Dia), como alvos de célula. */
+  const entriesAt = useCallback(
+    (asbId: string, hour: number): CellTarget[] =>
+      day.slots
+        .filter((s) => s.hour === hour && s.who.type === 'asb' && s.who.asbId === asbId)
+        .map((s) => (s.kind === 'sala' ? { kind: 'sala', roomId: s.roomId } : { kind: s.kind })),
+    [day.slots],
+  );
+
+  const sameTarget = (a: CellTarget, b: CellTarget) => a.kind === b.kind && (a.kind !== 'sala' || a.roomId === b.roomId);
+
+  /** Aplica a colocação. `additive` mantém as outras salas da hora (cobrir duas salas). */
+  const place = useCallback(
+    (asbId: string, hours: number[], column: Column, additive: boolean, orig?: DragItem & { type: 'slot' }) => {
+      const target = targetOf(column);
+      if (!isDay) {
+        apply((d) => {
+          if (orig && !hours.includes(orig.hour)) removeSlotAt(d, asbId, orig.hour, orig.kind, orig.roomId);
+          setSlots(d, asbId, hours, target, { additive });
+        });
+        return;
+      }
+      apply((d) => {
+        if (orig && !hours.includes(orig.hour)) {
+          const origTarget: CellTarget = orig.kind === 'sala' ? { kind: 'sala', roomId: orig.roomId } : { kind: orig.kind };
+          setDaySlots(d, date, asbId, [orig.hour], entriesAt(asbId, orig.hour).filter((e) => !sameTarget(e, origTarget)));
+        }
+        for (const hour of hours) {
+          const current = entriesAt(asbId, hour).filter((e) => !sameTarget(e, target));
+          const kept = additive ? current.filter((e) => e.kind === 'sala' && target.kind === 'sala') : [];
+          setDaySlots(d, date, asbId, [hour], [...kept, target]);
+        }
+      });
+    },
+    [apply, isDay, date, entriesAt],
+  );
+
+  const removeChip = useCallback(
+    (asbId: string, hour: number, kind: SlotKind, roomId?: string) => {
+      if (!isDay) {
+        apply((d) => removeSlotAt(d, asbId, hour, kind, roomId));
+        return;
+      }
+      const t: CellTarget = kind === 'sala' ? { kind: 'sala', roomId } : { kind };
+      apply((d) => setDaySlots(d, date, asbId, [hour], entriesAt(asbId, hour).filter((e) => !sameTarget(e, t))));
+    },
+    [apply, isDay, date, entriesAt],
+  );
+
   const onDragStart = (e: DragStartEvent) => {
     const item = e.active.data.current as DragItem | undefined;
     setActive(item ?? null);
@@ -127,34 +198,47 @@ export function Board() {
     if (!item || !over) return;
     const asb = asbById.get(item.asbId);
     if (!asb) return;
+    const orig = item.type === 'slot' ? item : undefined;
     if (over.type === 'palette') {
-      if (item.type === 'slot') apply((d) => removeSlot(d, item.asbId, item.hour));
+      if (orig) removeChip(orig.asbId, orig.hour, orig.kind, orig.roomId);
       return;
     }
-    if (!canAssign(asb, over.hour)) return;
-    const origHour = item.type === 'slot' ? item.hour : undefined;
-    if (wantRange && over.hour + 1 < asb.end) {
-      setPending({ asbId: asb.id, column: over.column, fromHour: over.hour, origHour });
+    if (!allowedAt(asb, over.hour)) return;
+    if (wantRange && allowedAt(asb, over.hour + 1)) {
+      setPending({ asbId: asb.id, column: over.column, fromHour: over.hour, orig });
       return;
     }
-    apply((d) => {
-      if (origHour !== undefined && origHour !== over.hour) removeSlot(d, asb.id, origHour);
-      setSlots(d, asb.id, [over.hour], { kind: over.column.kind, roomId: over.column.roomId });
-    });
+    const target = targetOf(over.column);
+    const movingSameHour = orig !== undefined && orig.hour === over.hour;
+    const otherRooms = target.kind === 'sala' && !movingSameHour
+      ? entriesAt(asb.id, over.hour).filter((x) => x.kind === 'sala' && x.roomId !== target.roomId).map((x) => data.rooms.find((r) => r.id === x.roomId)?.name ?? '')
+      : [];
+    if (otherRooms.length > 0) {
+      setConflict({ asbId: asb.id, column: over.column, hour: over.hour, currentRooms: otherRooms, orig });
+      return;
+    }
+    place(asb.id, [over.hour], over.column, false, orig);
   };
 
   const applyRange = (endHour: number) => {
     if (!pending) return;
     const hours: number[] = [];
     for (let h = pending.fromHour; h < endHour; h++) hours.push(h);
-    apply((d) => {
-      if (pending.origHour !== undefined && !hours.includes(pending.origHour)) removeSlot(d, pending.asbId, pending.origHour);
-      setSlots(d, pending.asbId, hours, { kind: pending.column.kind, roomId: pending.column.roomId });
-    });
+    place(pending.asbId, hours, pending.column, false, pending.orig);
     setPending(null);
   };
 
   const onClear = async () => {
+    if (isDay) {
+      const ok = await confirm({
+        title: `Desfazer os ajustes de ${formatDate(date)}?`,
+        message: 'O dia volta a seguir a escala base (com as ausências e folgas cadastradas). Dá para desfazer com Ctrl+Z.',
+        confirmLabel: 'Limpar ajustes do dia',
+        danger: true,
+      });
+      if (ok) apply((d) => clearDayOverrides(d, date));
+      return;
+    }
     const ok = await confirm({
       title: 'Limpar a escala base?',
       message: 'Todas as fichas do quadro serão removidas. Dá para desfazer com Ctrl+Z.',
@@ -164,19 +248,19 @@ export function Board() {
     if (ok) apply(clearSchedule);
   };
 
-  const removeChip = useCallback((asbId: string, hour: number) => apply((d) => removeSlot(d, asbId, hour)), [apply]);
-
   const isEmpty = data.asbs.length === 0 && data.base.slots.length === 0;
   if (isEmpty) return <EmptyState />;
+
+  const overridesCount = isDay ? day.overrides.length : 0;
 
   return (
     <div>
       <div className="toolbar">
-        <div className="btn-group" style={{ display: 'flex', gap: 4 }}>
-          <button className={`btn${mode === 'base' ? ' active' : ''}`} onClick={() => setMode('base')}>Escala base</button>
-          <button className={`btn${mode === 'day' ? ' active' : ''}`} onClick={() => setMode('day')}>Modo Dia</button>
+        <div style={{ display: 'flex', gap: 4 }}>
+          <button className={`btn${!isDay ? ' active' : ''}`} onClick={() => setMode('base')}>Escala base</button>
+          <button className={`btn${isDay ? ' active' : ''}`} onClick={() => setMode('day')}>Modo Dia</button>
         </div>
-        {mode === 'day' && (
+        {isDay && (
           <>
             <input type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} aria-label="Data" />
             <span className="muted">
@@ -185,7 +269,7 @@ export function Board() {
             </span>
           </>
         )}
-        {mode === 'base' && (
+        {!readOnly && (
           <>
             <button className={`btn${rangeMode ? ' active' : ''}`} onClick={() => setRangeMode((v) => !v)} title="Ao soltar a ficha, pergunta até que horas preencher">
               Preencher em faixa
@@ -193,12 +277,18 @@ export function Board() {
             <span className="muted small hint-shift">ou segure Shift ao soltar</span>
             <span className="spacer" />
             <UndoRedo />
-            <button className="btn danger" onClick={onClear} disabled={data.base.slots.length === 0}>Limpar escala</button>
+            {isDay ? (
+              <button className="btn danger" onClick={onClear} disabled={!hasDayOverrides(data, date)}>
+                Limpar ajustes do dia{overridesCount > 0 ? ` (${overridesCount})` : ''}
+              </button>
+            ) : (
+              <button className="btn danger" onClick={onClear} disabled={data.base.slots.length === 0}>Limpar escala</button>
+            )}
           </>
         )}
       </div>
 
-      {mode === 'day' && <DaySummary day={day} data={data} />}
+      {isDay && <DaySummary day={day} data={data} />}
 
       <DndContext sensors={sensors} collisionDetection={collision} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setActive(null)}>
         <div className="board-layout">
@@ -219,6 +309,7 @@ export function Board() {
                   slotsByCell={slotsByCell}
                   cellAlerts={cellAlerts}
                   activeAsb={activeAsb}
+                  allowedAt={allowedAt}
                   colors={colors}
                   asbById={asbById}
                   readOnly={readOnly}
@@ -227,22 +318,34 @@ export function Board() {
               ))}
             </div>
           </div>
-          <Palette day={day} asbs={data.asbs} colors={colors} readOnly={readOnly} active={active} alerts={alerts} />
+          <Palette day={day} asbs={data.asbs} colors={colors} readOnly={readOnly} isDay={isDay} active={active} alerts={alerts} />
         </div>
         <DragOverlay dropAnimation={null}>
           {activeAsb ? <ChipOverlay label={activeAsb.name} color={colors.get(activeAsb.id) ?? '#555'} /> : null}
         </DragOverlay>
       </DndContext>
 
-      <AlertsPanel alerts={alerts} title={mode === 'base' ? 'Alertas da escala base' : `Alertas de ${formatDate(date)}`} />
+      <AlertsPanel alerts={alerts} title={isDay ? `Alertas de ${formatDate(date)}` : 'Alertas da escala base'} />
 
       {pending && asbById.get(pending.asbId) && (
         <RangeDialog
           asb={asbById.get(pending.asbId)!}
           column={pending.column}
           fromHour={pending.fromHour}
+          allowed={isDay ? allowedHours(asbById.get(pending.asbId)!, day.extraShifts) : validHours(asbById.get(pending.asbId)!)}
           onPick={applyRange}
           onClose={() => setPending(null)}
+        />
+      )}
+      {conflict && (
+        <ConflictDialog
+          asbName={asbById.get(conflict.asbId)?.name ?? ''}
+          hourLabel={formatHour(conflict.hour)}
+          currentRooms={conflict.currentRooms}
+          targetRoom={conflict.column.label}
+          onMove={() => { place(conflict.asbId, [conflict.hour], conflict.column, false, conflict.orig); setConflict(null); }}
+          onBoth={() => { place(conflict.asbId, [conflict.hour], conflict.column, true, conflict.orig); setConflict(null); }}
+          onClose={() => setConflict(null)}
         />
       )}
     </div>
@@ -256,13 +359,14 @@ interface RowProps {
   slotsByCell: Map<string, EffectiveSlot[]>;
   cellAlerts: Map<string, Alert['level']>;
   activeAsb?: Asb;
+  allowedAt: (asb: Asb, hour: number) => boolean;
   colors: Map<string, string>;
   asbById: Map<string, Asb>;
   readOnly: boolean;
-  onRemove: (asbId: string, hour: number) => void;
+  onRemove: (asbId: string, hour: number, kind: SlotKind, roomId?: string) => void;
 }
 
-function RowCells({ hour, columns, day, slotsByCell, cellAlerts, activeAsb, colors, asbById, readOnly, onRemove }: RowProps) {
+function RowCells({ hour, columns, day, slotsByCell, cellAlerts, activeAsb, allowedAt, colors, asbById, readOnly, onRemove }: RowProps) {
   return (
     <>
       <div className="hour" title={formatBlock(hour)}>
@@ -278,6 +382,7 @@ function RowCells({ hour, columns, day, slotsByCell, cellAlerts, activeAsb, colo
           slots={slotsByCell.get(cellKey(c.key, hour)) ?? []}
           alertLevel={cellAlerts.get(cellKey(c.key, hour))}
           activeAsb={activeAsb}
+          allowedAt={allowedAt}
           colors={colors}
           asbById={asbById}
           readOnly={readOnly}
@@ -295,20 +400,31 @@ interface CellProps {
   slots: EffectiveSlot[];
   alertLevel?: Alert['level'];
   activeAsb?: Asb;
+  allowedAt: (asb: Asb, hour: number) => boolean;
   colors: Map<string, string>;
   asbById: Map<string, Asb>;
   readOnly: boolean;
-  onRemove: (asbId: string, hour: number) => void;
+  onRemove: (asbId: string, hour: number, kind: SlotKind, roomId?: string) => void;
 }
 
-function Cell({ column, hour, day, slots, alertLevel, activeAsb, colors, asbById, readOnly, onRemove }: CellProps) {
-  const valid = activeAsb ? canAssign(activeAsb, hour) : undefined;
+function slotTag(s: EffectiveSlot, asbById: Map<string, Asb>): string | undefined {
+  const parts: string[] = [];
+  if (s.coveringFor) parts.push(`cobre ${asbById.get(s.coveringFor)?.name ?? '?'}`);
+  if (s.origin === 'auto') parts.push('remanejada');
+  if (s.origin === 'override') parts.push('ajuste');
+  if (s.extra) parts.push('extra');
+  return parts.length > 0 ? parts.join(', ') : undefined;
+}
+
+function Cell({ column, hour, day, slots, alertLevel, activeAsb, allowedAt, colors, asbById, readOnly, onRemove }: CellProps) {
+  const valid = activeAsb ? allowedAt(activeAsb, hour) : undefined;
   const { setNodeRef, isOver } = useDroppable({
     id: `cell:${column.key}:${hour}`,
     data: { type: 'cell', column, hour } satisfies CellData,
     disabled: readOnly || valid === false,
   });
   const dentists = column.roomId ? dentistsAt(day.dentists, column.roomId, hour) : [];
+  const off = column.roomId ? dentistsAt(day.dentistsOff, column.roomId, hour) : [];
   const noDentist = column.kind === 'sala' && dentists.length === 0;
   const cls = [
     'cell',
@@ -323,6 +439,8 @@ function Cell({ column, hour, day, slots, alertLevel, activeAsb, colors, asbById
       {column.kind === 'sala' &&
         (dentists.length > 0 ? (
           <div className="dentist">{dentists.map((d) => `${d.name} (${d.specialty})`).join(', ')}</div>
+        ) : off.length > 0 ? (
+          <div className="dentist empty">{off.map((d) => d.name).join(', ')} de folga</div>
         ) : (
           <div className="dentist empty">sala vazia</div>
         ))}
@@ -334,17 +452,17 @@ function Cell({ column, hour, day, slots, alertLevel, activeAsb, colors, asbById
           }
           const asb = asbById.get(s.who.asbId);
           if (!asb) return null;
-          const covering = s.coveringFor ? asbById.get(s.coveringFor)?.name : undefined;
           return (
             <Chip
-              key={asb.id}
-              id={`slot:${asb.id}:${hour}`}
+              key={`${asb.id}-${i}`}
+              id={`slot:${asb.id}:${hour}:${column.key}`}
               label={asb.name}
               color={colors.get(asb.id) ?? '#555'}
-              tag={covering ? `cobre ${covering}` : undefined}
-              item={readOnly ? undefined : { type: 'slot', asbId: asb.id, hour }}
+              tag={slotTag(s, asbById)}
+              origin={s.origin}
+              item={readOnly ? undefined : { type: 'slot', asbId: asb.id, hour, kind: s.kind, roomId: s.roomId }}
               disabled={readOnly}
-              onRemove={readOnly ? undefined : () => onRemove(asb.id, hour)}
+              onRemove={readOnly ? undefined : () => onRemove(asb.id, hour, s.kind, s.roomId)}
               title={`${asb.name}, ${formatRange(asb.start, asb.end)}`}
             />
           );
@@ -359,11 +477,12 @@ interface PaletteProps {
   asbs: Asb[];
   colors: Map<string, string>;
   readOnly: boolean;
+  isDay: boolean;
   active: DragItem | null;
   alerts: Alert[];
 }
 
-function Palette({ day, asbs, colors, readOnly, active, alerts }: PaletteProps) {
+function Palette({ day, asbs, colors, readOnly, isDay, active, alerts }: PaletteProps) {
   const { setNodeRef, isOver } = useDroppable({ id: 'palette', data: { type: 'palette' } satisfies PaletteDrop, disabled: readOnly || active?.type !== 'slot' });
   const sorted = [...asbs].filter((a) => a.active).sort((a, b) => a.start - b.start || a.name.localeCompare(b.name));
   const absenceOf = (id: string) => day.absences.find((x) => x.asbId === id);
@@ -373,20 +492,31 @@ function Palette({ day, asbs, colors, readOnly, active, alerts }: PaletteProps) 
       <div className="card">
         <h3>ASBs</h3>
         <p className="muted small">
-          {readOnly ? 'Modo Dia é somente leitura.' : active?.type === 'slot' ? 'Solte aqui para remover.' : 'Arraste uma ficha para o quadro. No celular, segure a ficha antes de arrastar.'}
+          {readOnly
+            ? 'O CEO não abre nesse dia.'
+            : active?.type === 'slot'
+              ? 'Solte aqui para remover.'
+              : isDay
+                ? 'Ajustes feitos aqui valem só para esta data.'
+                : 'Arraste uma ficha para o quadro. No celular, segure a ficha antes de arrastar.'}
         </p>
         <div className="palette-list">
           {sorted.map((asb) => {
             const abs = absenceOf(asb.id);
             const hours = new Set(day.slots.filter((s) => s.who.type === 'asb' && s.who.asbId === asb.id).map((s) => s.hour));
-            const total = validHours(asb).length;
-            const filled = [...hours].filter((h) => canAssign(asb, h)).length;
+            const allowed = isDay ? allowedHours(asb, day.extraShifts) : validHours(asb);
+            const total = allowed.length;
+            const filled = [...hours].filter((h) => allowed.includes(h)).length;
             const color = colors.get(asb.id) ?? '#555';
+            const extras = day.extraShifts.filter((e) => e.asbId === asb.id);
             return (
               <div key={asb.id} className={`palette-item${abs ? ' absent' : ''}`}>
                 <Chip id={`pal:${asb.id}`} label={asb.name} color={color} item={readOnly || abs ? undefined : { type: 'palette', asbId: asb.id }} disabled={readOnly || !!abs} />
                 <div className="meta">
-                  <span>{formatRange(asb.start, asb.end)}{asb.lunch ? '' : ', sem almoço'}</span>
+                  <span>
+                    {formatRange(asb.start, asb.end)}{asb.lunch ? '' : ', sem almoço'}
+                    {extras.map((e) => ` + extra ${formatRange(e.start, e.end)}`).join('')}
+                  </span>
                   <span className={lunchAlert.has(asb.id) ? 'error' : undefined}>{filled} de {total} blocos</span>
                 </div>
                 {abs ? (
@@ -408,20 +538,27 @@ function Palette({ day, asbs, colors, readOnly, active, alerts }: PaletteProps) 
   );
 }
 
-function DaySummary({ day, data }: { day: EffectiveDay; data: ReturnType<typeof useData> }) {
+function DaySummary({ day, data }: { day: EffectiveDay; data: AppData }) {
   if (!day.open) return <p className="card muted">O CEO não abre neste dia da semana. Ajuste os dias de funcionamento em Ajustes.</p>;
-  if (day.absences.length === 0) return <p className="muted small">Sem ausências nesta data. A escala do dia é igual à base.</p>;
   const name = (id: string) => data.asbs.find((a) => a.id === id)?.name ?? id;
+  const items: string[] = [];
+  for (const a of day.absences) {
+    items.push(
+      `${name(a.asbId)} ausente (${a.reason}). ${isTeamSubstitute(a) ? `Cobre ${name(a.substitute.asbId)}.` : isExternalSubstitute(a) ? `Cobre ${a.substitute.externalName} (externa).` : 'Sem substituta.'}`,
+    );
+  }
+  for (const d of day.dentistsOff) {
+    const abs = day.dentistAbsences.find((x) => x.dentistId === d.id);
+    items.push(`${d.name} de folga${abs ? ` (${abs.reason})` : ''}: a ASB da sala fica livre e é remanejada se outra sala precisar.`);
+  }
+  for (const e of day.extraShifts) items.push(`${name(e.asbId)} faz hora extra ${formatRange(e.start, e.end)}${e.note ? ` (${e.note})` : ''}.`);
+  if (day.overrides.length > 0) items.push(`${day.overrides.length} ajuste${day.overrides.length > 1 ? 's' : ''} feito${day.overrides.length > 1 ? 's' : ''} só para este dia (fichas tracejadas).`);
+  if (items.length === 0) return <p className="muted small">Sem ausências, folgas ou horas extras nesta data. O dia segue a escala base. Arraste fichas para ajustar só este dia.</p>;
   return (
     <div className="card" style={{ marginBottom: 12 }}>
-      <h3>Ausências do dia</h3>
+      <h3>Este dia</h3>
       <ul style={{ margin: 0, paddingLeft: 18 }}>
-        {day.absences.map((a) => (
-          <li key={a.id}>
-            <strong>{name(a.asbId)}</strong>: {a.reason}.{' '}
-            {isTeamSubstitute(a) ? `Cobre ${name(a.substitute.asbId)}.` : isExternalSubstitute(a) ? `Cobre ${a.substitute.externalName} (externa).` : 'Sem substituta.'}
-          </li>
-        ))}
+        {items.map((t, i) => <li key={i}>{t}</li>)}
       </ul>
     </div>
   );

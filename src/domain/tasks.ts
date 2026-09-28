@@ -96,6 +96,9 @@ export function resolveTask(data: AppData, task: Task, date: IsoDate, day?: Effe
       const dentist = data.dentists.find((d) => d.id === a.dentistId);
       if (!dentist) return { ...base, reason: 'Dentista não encontrado.' };
       const eff = day ?? effectiveDay(data, date);
+      if (eff.dentistsOff.some((d) => d.id === dentist.id)) {
+        return { ...base, reason: `${dentist.name} está de folga nesse dia.` };
+      }
       if (!eff.dentists.some((d) => d.id === dentist.id)) {
         return { ...base, reason: `${dentist.name} não atende nesse dia.` };
       }

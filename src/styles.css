@@ -159,6 +159,17 @@ a { color: var(--accent); }
 .alert-list li { padding: 6px 10px; border-radius: 6px; border-left: 4px solid; font-size: 13px; }
 .alert-list li.critico { background: var(--danger-soft); border-color: var(--danger); }
 .alert-list li.aviso { background: var(--warn-soft); border-color: var(--warn); }
+.alert-list li.info { background: var(--accent-soft); border-color: var(--accent); }
+.badge.info { background: var(--accent); color: #fff; }
+.chip.override { outline: 2px dashed rgba(255,255,255,0.85); outline-offset: -3px; }
+.chip.auto { box-shadow: 0 0 0 2px var(--accent); }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 12px; flex-wrap: wrap; }
+.tabs button { border: 0; background: none; padding: 8px 12px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tabs button.active { border-bottom-color: var(--accent); color: var(--accent); font-weight: 600; }
+.suggest { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 10px; }
+.suggest button { text-align: left; }
+.calendar .day .abs.dentist { background: #444; }
+.calendar .day .abs.extra { background: var(--ok); }
 .badge { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 600; }
 .badge.critico { background: var(--danger); color: #fff; }
 .badge.aviso { background: var(--warn); color: #fff; }

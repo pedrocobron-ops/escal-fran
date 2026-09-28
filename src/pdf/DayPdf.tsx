@@ -34,6 +34,17 @@ export function DayPdf({ m }: { m: DayPdfModel }) {
           </View>
         )}
 
+        {m.notes.length > 0 && (
+          <View style={{ marginTop: 4 }}>
+            {m.notes.map((n, i) => (
+              <View key={i} style={s.bullet}>
+                <Text style={s.bulletDot}>•</Text>
+                <Text style={s.bulletText}>{n}</Text>
+              </View>
+            ))}
+          </View>
+        )}
+
         <Text style={s.h2}>Quadro do dia</Text>
         <View style={s.table}>
           <View style={[s.row, s.head]}>

@@ -1,10 +1,10 @@
 import { useDraggable } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
-import type { Id } from '../../domain';
+import type { Id, SlotKind, SlotOrigin } from '../../domain';
 
 export type DragItem =
   | { type: 'palette'; asbId: Id }
-  | { type: 'slot'; asbId: Id; hour: number };
+  | { type: 'slot'; asbId: Id; hour: number; kind: SlotKind; roomId?: Id };
 
 interface ChipProps {
   id: string;
@@ -13,19 +13,26 @@ interface ChipProps {
   tag?: string;
   item?: DragItem;
   external?: boolean;
+  origin?: SlotOrigin;
   disabled?: boolean;
   onRemove?: () => void;
   title?: string;
 }
 
 /** Ficha de ASB. Arrastável quando recebe `item` e não está desabilitada. */
-export function Chip({ id, label, color, tag, item, external, disabled, onRemove, title }: ChipProps) {
+export function Chip({ id, label, color, tag, item, external, origin, disabled, onRemove, title }: ChipProps) {
   const draggable = useDraggable({ id, data: item, disabled: disabled || !item });
   const style = {
     background: external ? undefined : color,
     transform: draggable.transform ? CSS.Translate.toString(draggable.transform) : undefined,
   };
-  const cls = ['chip', external ? 'external' : '', !item || disabled ? 'static' : '', draggable.isDragging ? 'dragging' : ''].join(' ');
+  const cls = [
+    'chip',
+    external ? 'external' : '',
+    origin === 'override' ? 'override' : origin === 'auto' ? 'auto' : '',
+    !item || disabled ? 'static' : '',
+    draggable.isDragging ? 'dragging' : '',
+  ].join(' ');
   return (
     <span ref={draggable.setNodeRef} className={cls} style={style} title={title} {...draggable.listeners} {...draggable.attributes}>
       <span>{label}</span>

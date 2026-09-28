@@ -141,6 +141,18 @@ export function parseBackup(json: string): AppData {
     need(isRecord(a) && isStr(a.id) && isStr(a.asbId) && isIso(a.from) && isIso(a.to) && isStr(a.reason), `Ausência ${i + 1} incompleta.`);
   });
   (raw.rules as unknown[]).forEach((r, i) => need(typeof r === 'string', `Regra ${i + 1} precisa ser texto.`));
+  if (raw.extraShifts !== undefined) {
+    need(isArray(raw.extraShifts), 'O campo "extraShifts" precisa ser uma lista.');
+    (raw.extraShifts as unknown[]).forEach((e, i) => need(isRecord(e) && isStr(e.id) && isStr(e.asbId) && isIso(e.date) && isNum(e.start) && isNum(e.end), `Hora extra ${i + 1} incompleta.`));
+  }
+  if (raw.dentistAbsences !== undefined) {
+    need(isArray(raw.dentistAbsences), 'O campo "dentistAbsences" precisa ser uma lista.');
+    (raw.dentistAbsences as unknown[]).forEach((a, i) => need(isRecord(a) && isStr(a.id) && isStr(a.dentistId) && isIso(a.from) && isIso(a.to), `Folga de dentista ${i + 1} incompleta.`));
+  }
+  if (raw.dayOverrides !== undefined) {
+    need(isArray(raw.dayOverrides), 'O campo "dayOverrides" precisa ser uma lista.');
+    (raw.dayOverrides as unknown[]).forEach((o, i) => need(isRecord(o) && isStr(o.id) && isStr(o.asbId) && isIso(o.date) && isNum(o.hour) && isStr(o.kind) && [...SLOT_KINDS, 'livre'].includes(o.kind), `Ajuste de dia ${i + 1} incompleto.`));
+  }
 
   const data = raw as unknown as AppData;
   return migrate(data);
@@ -152,6 +164,9 @@ export function migrate(data: AppData): AppData {
   if (typeof out.version !== 'number') out.version = CURRENT_VERSION;
   if (!Array.isArray(out.openDays) || out.openDays.length === 0) out.openDays = [1, 2, 3, 4, 5];
   if (!Array.isArray(out.protese)) out.protese = [];
+  if (!Array.isArray(out.extraShifts)) out.extraShifts = [];
+  if (!Array.isArray(out.dentistAbsences)) out.dentistAbsences = [];
+  if (!Array.isArray(out.dayOverrides)) out.dayOverrides = [];
   out.asbs = out.asbs.map((a) => ({ ...a, active: a.active !== false, lunch: a.lunch === true }));
   return out;
 }

@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import type { Task } from '../../domain';
 import {
-  absencesBetween, firstOfMonth, formatDate, formatDayMonth, formatMonth, isExternalSubstitute, isTeamSubstitute, lastOfMonth, monthRotation, weeksOfMonth,
+  absencesBetween, dentistAbsencesBetween, extraShiftsBetween, firstOfMonth, formatDate, formatDayMonth, formatMonth, formatRange,
+  isExternalSubstitute, isTeamSubstitute, lastOfMonth, monthRotation, weeksOfMonth,
 } from '../../domain';
 import { useData } from '../../store/useStore';
 import { colorMap } from '../colors';
@@ -18,7 +19,12 @@ export function MonthScreen() {
   const rotations = data.tasks.filter((t): t is Task & { assignment: { mode: 'rotation' } } => t.assignment.mode === 'rotation');
   const weekly = rotations.filter((t) => t.assignment.period === 'week');
   const monthly = rotations.filter((t) => t.assignment.period === 'month');
-  const absences = absencesBetween(data, firstOfMonth(ym.year, ym.month), lastOfMonth(ym.year, ym.month)).sort((a, b) => a.from.localeCompare(b.from));
+  const first = firstOfMonth(ym.year, ym.month);
+  const last = lastOfMonth(ym.year, ym.month);
+  const absences = absencesBetween(data, first, last).sort((a, b) => a.from.localeCompare(b.from));
+  const dentAbs = dentistAbsencesBetween(data, first, last).sort((a, b) => a.from.localeCompare(b.from));
+  const extras = extraShiftsBetween(data, first, last).sort((a, b) => a.date.localeCompare(b.date) || a.start - b.start);
+  const dentName = (id: string) => data.dentists.find((d) => d.id === id)?.name ?? '?';
 
   return (
     <div className="stack">
@@ -114,8 +120,49 @@ export function MonthScreen() {
           </table>
         )}
         <div style={{ marginTop: 12 }}>
-          <MonthCalendar ym={ym} absences={data.absences} colors={colors} nameOf={name} openDays={data.openDays} />
+          <MonthCalendar ym={ym} data={data} colors={colors} />
         </div>
+      </section>
+
+      <section className="card">
+        <h2>Folgas de dentista</h2>
+        {dentAbs.length === 0 ? (
+          <p className="muted">Nenhuma folga de dentista neste mês.</p>
+        ) : (
+          <table className="table">
+            <thead><tr><th>Dentista</th><th>Período</th><th>Motivo</th></tr></thead>
+            <tbody>
+              {dentAbs.map((a) => (
+                <tr key={a.id}>
+                  <td>{dentName(a.dentistId)}</td>
+                  <td className="mono">{a.from === a.to ? formatDate(a.from) : `${formatDate(a.from)} a ${formatDate(a.to)}`}</td>
+                  <td>{a.reason}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+
+      <section className="card">
+        <h2>Horas extras</h2>
+        {extras.length === 0 ? (
+          <p className="muted">Nenhuma hora extra neste mês.</p>
+        ) : (
+          <table className="table">
+            <thead><tr><th>ASB</th><th>Data</th><th>Horário</th><th>Obs.</th></tr></thead>
+            <tbody>
+              {extras.map((e) => (
+                <tr key={e.id}>
+                  <td>{name(e.asbId)}</td>
+                  <td className="mono">{formatDate(e.date)}</td>
+                  <td className="mono">{formatRange(e.start, e.end)}</td>
+                  <td>{e.note ?? ''}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </section>
     </div>
   );
