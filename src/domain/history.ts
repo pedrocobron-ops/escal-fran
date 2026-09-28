@@ -54,3 +54,12 @@ export function recordHistory(prev: AppData, next: AppData, today: IsoDate): Str
   hist.push(snap);
   return hist;
 }
+
+/** Procura uma ASB pelo id na estrutura atual e em todo o histórico (quem foi removida continua com nome). */
+export function findAsbAnywhere(data: AppData, id: string) {
+  return data.asbs.find((a) => a.id === id) ?? [...(data.history ?? [])].reverse().flatMap((h) => h.asbs ?? []).find((a) => a.id === id);
+}
+
+export function findDentistAnywhere(data: AppData, id: string) {
+  return data.dentists.find((d) => d.id === id) ?? [...(data.history ?? [])].reverse().flatMap((h) => h.dentists ?? []).find((d) => d.id === id);
+}

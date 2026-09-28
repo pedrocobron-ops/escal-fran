@@ -17,20 +17,22 @@ describe('folga de dentista', () => {
     expect(day.dentistsOff.map((x) => x.id)).toEqual(['id002']);
     expect(day.dentists.some((x) => x.id === 'id002')).toBe(false);
     const andrea = (h: number) => day.slots.find((s) => s.who.type === 'asb' && s.who.asbId === ID.andrea && s.hour === h);
-    // 07h: Sala 1 não tem dentista, Andrea fica na Sala 3 (sem aviso de sala sem dentista)
-    expect(andrea(7)).toMatchObject({ kind: 'sala', roomId: 's3', origin: 'base' });
+    // 07h: a Sala 1 não tem dentista, mas o CME da Laura precisa de alguém: Andrea vai para o CME
+    expect(andrea(7)).toMatchObject({ kind: 'cme', origin: 'auto', movedFrom: 's3', coveringFor: ID.laura });
     // 08h–10h: remanejada para a Sala 1
     for (const h of [8, 9, 10]) expect(andrea(h)).toMatchObject({ kind: 'sala', roomId: 's1', origin: 'auto', movedFrom: 's3' });
     const alerts = analyze(d, day);
     expect(alerts.filter((a) => a.code === 'sala-sem-asb' && a.roomId === 's1').map((a) => a.hour)).toEqual([11, 13, 14]); // só o que Andrea não alcança
     expect(alerts.filter((a) => a.code === 'sala-sem-dentista')).toEqual([]);
     expect(alerts.find((a) => a.code === 'dentista-de-folga')?.message).toContain('Dra. Victoria');
-    const rem = alerts.filter((a) => a.code === 'remanejada');
-    expect(rem).toHaveLength(1);
-    expect(rem[0].message).toBe('Andrea remanejada da Sala 3 para a Sala 1 (08h–11h).');
-    expect(rem[0].level).toBe('info');
+    const rem = alerts.filter((a) => a.code === 'remanejada').map((a) => a.message);
+    expect(rem).toEqual([
+      'Andrea remanejada da Sala 3 para o CME / Arsenal (07h–08h), cobrindo Laura.',
+      'Andrea remanejada da Sala 3 para a Sala 1 (08h–11h).',
+    ]);
+    expect(alerts.filter((a) => a.code === 'remanejada').every((a) => a.level === 'info')).toBe(true);
     // o aviso "ausente sem substituta" some onde a sala foi coberta
-    expect(alerts.filter((a) => a.code === 'ausente-sem-substituta').map((a) => a.hour)).toEqual([7, 11, 13, 14]);
+    expect(alerts.filter((a) => a.code === 'ausente-sem-substituta').map((a) => a.hour)).toEqual([11, 13, 14]);
   });
 
   it('sem sala descoberta, a ASB fica onde está e não há aviso', () => {

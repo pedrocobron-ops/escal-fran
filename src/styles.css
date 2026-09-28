@@ -167,7 +167,15 @@ a { color: var(--accent); }
 .tabs button { border: 0; background: none; padding: 8px 12px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
 .tabs button.active { border-bottom-color: var(--accent); color: var(--accent); font-weight: 600; }
 .suggest { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 10px; }
-.suggest button { text-align: left; }
+.suggest button { text-align: left; white-space: normal; justify-content: flex-start; line-height: 1.3; }
+.suggest button > span { display: block; }
+.note { padding: 8px 10px; border-radius: 6px; margin: 6px 0 10px; font-size: 13px; }
+.note.warn { background: var(--warn-soft); border-left: 4px solid var(--warn); }
+.note.bad { background: var(--danger-soft); border-left: 4px solid var(--danger); }
+.note.ok { background: var(--ok-soft); border-left: 4px solid var(--ok); }
+.calendar .day.problem { box-shadow: inset 0 0 0 2px var(--danger); }
+.calendar .day .flag { float: right; color: var(--danger); font-weight: 700; }
+.list-toggle { font-size: 12px; }
 .calendar .day .abs.dentist { background: #444; }
 .calendar .day .abs.extra { background: var(--ok); }
 .badge { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 600; }
@@ -235,6 +243,12 @@ a { color: var(--accent); }
   .calendar .day { min-height: 44px; font-size: 10px; padding: 2px 3px; }
   .calendar .day .abs { font-size: 9px; }
   .modal { padding: 14px; }
+  /* Listas em cartões no celular: nada escondido à direita. */
+  .table.responsive thead { display: none; }
+  .table.responsive, .table.responsive tbody, .table.responsive tr, .table.responsive td { display: block; width: 100%; }
+  .table.responsive tr { border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px; padding: 6px 8px; background: var(--surface); }
+  .table.responsive td { border: 0; padding: 2px 0; }
+  .table.responsive td[data-label]::before { content: attr(data-label) ': '; color: var(--muted); font-size: 12px; }
 }
 
 /* Toque: fichas e botões maiores para o dedo. */

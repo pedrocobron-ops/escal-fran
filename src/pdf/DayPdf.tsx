@@ -14,7 +14,7 @@ export function DayPdf({ m }: { m: DayPdfModel }) {
 
         <Text style={s.h2}>Ausências e coberturas</Text>
         {m.absences.length === 0 ? (
-          <Text style={s.muted}>Sem ausências. A escala do dia é igual à escala base.</Text>
+          <Text style={s.muted}>{m.notes.length > 0 ? 'Sem ausências de ASB.' : 'Sem ausências. A escala do dia é igual à escala base.'}</Text>
         ) : (
           <View style={s.table}>
             <View style={[s.row, s.head]}>

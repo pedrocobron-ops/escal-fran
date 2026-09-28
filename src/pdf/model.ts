@@ -2,7 +2,7 @@
 
 import type { Absence, AppData, Asb, EffectiveDay, IsoDate, Task } from '../domain';
 import {
-  HOURS, OPEN_END, OPEN_START, SLOT_KIND_LABEL, WEEKDAY_LABEL, WEEKDAY_SHORT, absencesBetween, analyze, baseDay, dentistAbsencesBetween, dentistsAt, extraShiftsBetween,
+  HOURS, OPEN_END, OPEN_START, SLOT_KIND_LABEL, WEEKDAY_LABEL, WEEKDAY_SHORT, absencesBetween, analyze, baseDay, dentistAbsencesBetween, dentistsAt, validExtraShiftsBetween,
   effectiveDay, firstOfMonth, formatDate, formatDayMonth, formatMonth, formatRange, isExternalSubstitute, isTeamSubstitute,
   dataForDate, lastOfMonth, monthRotation, paidExtraHours, resolveTask, todayIso, weekdayOf, weeksOfMonth,
 } from '../domain';
@@ -59,10 +59,20 @@ export interface MonthPdfModel {
   generatedAt: string;
 }
 
+/** Marcas curtas depois do nome: remanejada, hora extra, ajuste. */
+function slotMarks(s: EffectiveDay['slots'][number]): string {
+  const m: string[] = [];
+  if (s.origin === 'auto' && s.movedFrom) m.push('remanejada');
+  if (s.extra) m.push('hora extra');
+  else if (s.origin === 'auto' && !s.movedFrom) m.push('colocada pelo app');
+  if (s.origin === 'override') m.push('ajuste');
+  return m.length > 0 ? ` (${m.join(', ')})` : '';
+}
+
 /** Horas extras pagas por ASB no período, com o contrato valendo em cada data. */
 export function extraTotalsByAsb(current: AppData, from: IsoDate, to: IsoDate): Array<{ asb: string; hours: number }> {
   const totals = new Map<string, number>();
-  for (const e of extraShiftsBetween(current, from, to)) {
+  for (const e of validExtraShiftsBetween(current, from, to)) {
     const d = dataForDate(current, e.date);
     const asb = d.asbs.find((a) => a.id === e.asbId);
     const h = paidExtraHours(e, asb);
@@ -139,7 +149,7 @@ export function asbRows(data: AppData, day: EffectiveDay = baseDay(data)): AsbRo
       const afternoon = HOURS.filter((h) => h >= AFTERNOON_START);
       return {
         name: asb.name,
-        contract: formatRange(asb.start, asb.end),
+        contract: formatRange(asb.start, asb.end) + day.extraShifts.filter((e) => e.asbId === asb.id).map((e) => ` + extra ${formatRange(e.start, e.end)}`).join(''),
         morning: describePeriod(data, day, asb, morning),
         lunch: lunch ? formatRange(lunch.hour, lunch.hour + 1) : asb.lunch ? 'sem bloco' : 'não sai',
         afternoon: describePeriod(data, day, asb, afternoon),
@@ -160,7 +170,7 @@ export function roomRows(data: AppData, day: EffectiveDay): { roomNames: string[
       const off = dentistsAt(day.dentistsOff, room.id, hour);
       const asbs = day.slots
         .filter((s) => s.kind === 'sala' && s.roomId === room.id && s.hour === hour)
-        .map((s) => personLabel(data, s.who) + (s.origin === 'auto' ? ' (remanejada)' : s.extra ? ' (extra)' : ''));
+        .map((s) => personLabel(data, s.who) + slotMarks(s));
       const dentist = ds.length > 0 ? ds.map((d) => `${d.name} (${d.specialty})`).join(', ') : off.length > 0 ? `${off.map((d) => d.name).join(', ')} de folga` : 'sala vazia';
       const support = day.slots
         .filter((s) => s.kind === 'apoio' && s.roomId === room.id && s.hour === hour)
@@ -213,7 +223,7 @@ export function monthPdfModel(current: AppData, year: number, month: number, now
       period: a.from === a.to ? formatDate(a.from) : `${formatDate(a.from)} a ${formatDate(a.to)}`,
       reason: a.reason,
     }));
-  const extras = extraShiftsBetween(data, first, last)
+  const extras = validExtraShiftsBetween(data, first, last)
     .sort((a, b) => a.date.localeCompare(b.date) || a.start - b.start)
     .map((e) => ({ asb: asbName(data, e.asbId), date: `${WEEKDAY_SHORT[weekdayOf(e.date)]}, ${formatDate(e.date)}`, hours: formatRange(e.start, e.end), note: e.note ?? '' }));
   const extraTotals = extraTotalsByAsb(current, first, last);
@@ -271,7 +281,7 @@ export function dayPdfModel(current: AppData, date: IsoDate, now: Date = new Dat
         dentist: '',
         asb: day.slots
           .filter((s) => c.kinds.includes(s.kind) && s.hour === HOURS[i] && !(s.kind === 'apoio' && s.roomId))
-          .map((s) => personLabel(data, s.who) + (s.extra ? ' (extra)' : ''))
+          .map((s) => personLabel(data, s.who) + slotMarks(s))
           .join(', '),
       })),
     ],
@@ -292,6 +302,7 @@ export function dayPdfModel(current: AppData, date: IsoDate, now: Date = new Dat
       return `${d.name} de folga${abs ? ` (${abs.reason})` : ''}, ${data.rooms.find((r) => r.id === d.roomId)?.name ?? ''} ${formatRange(d.start, d.end)}.`;
     }),
     ...day.extraShifts.map((e) => `${asbName(data, e.asbId)} faz hora extra ${formatRange(e.start, e.end)}${e.note ? ` (${e.note})` : ''}.`),
+    ...(day.overrides.length > 0 ? [`${day.overrides.length} ajuste${day.overrides.length > 1 ? 's' : ''} feito${day.overrides.length > 1 ? 's' : ''} só para este dia.`] : []),
   ];
   return {
     title: 'Escala do dia - CEO',

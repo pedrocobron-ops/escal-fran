@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { Task } from '../../domain';
 import {
-  absencesBetween, dataForDate, dentistAbsencesBetween, extraShiftsBetween, firstOfMonth, formatDate, formatDayMonth, formatMonth, formatRange,
+  absencesBetween, dataForDate, dentistAbsencesBetween, validExtraShiftsBetween, firstOfMonth, WEEKDAY_SHORT, weekdayOf, formatDate, formatDayMonth, formatMonth, formatRange,
   isExternalSubstitute, isTeamSubstitute, lastOfMonth, monthRotation, weeksOfMonth,
 } from '../../domain';
 import { useData } from '../../store/useStore';
@@ -26,7 +26,7 @@ export function MonthScreen() {
   const last = lastOfMonth(ym.year, ym.month);
   const absences = absencesBetween(data, first, last).sort((a, b) => a.from.localeCompare(b.from));
   const dentAbs = dentistAbsencesBetween(data, first, last).sort((a, b) => a.from.localeCompare(b.from));
-  const extras = extraShiftsBetween(data, first, last).sort((a, b) => a.date.localeCompare(b.date) || a.start - b.start);
+  const extras = validExtraShiftsBetween(data, first, last).sort((a, b) => a.date.localeCompare(b.date) || a.start - b.start);
   const dentName = (id: string) => data.dentists.find((d) => d.id === id)?.name ?? '?';
 
   return (
@@ -164,7 +164,7 @@ export function MonthScreen() {
               {extras.map((e) => (
                 <tr key={e.id}>
                   <td>{name(e.asbId)}</td>
-                  <td className="mono">{formatDate(e.date)}</td>
+                  <td className="mono">{WEEKDAY_SHORT[weekdayOf(e.date)]}, {formatDate(e.date)}</td>
                   <td className="mono">{formatRange(e.start, e.end)}</td>
                   <td>{e.note ?? ''}</td>
                 </tr>

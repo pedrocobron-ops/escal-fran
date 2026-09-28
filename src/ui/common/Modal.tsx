@@ -5,9 +5,11 @@ interface ModalProps {
   onClose: () => void;
   children: ReactNode;
   wide?: boolean;
+  /** Formulários: tocar fora não fecha (para não perder o que foi preenchido). */
+  keepOnBackdrop?: boolean;
 }
 
-export function Modal({ title, onClose, children, wide }: ModalProps) {
+export function Modal({ title, onClose, children, wide, keepOnBackdrop }: ModalProps) {
   const ref = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -21,7 +23,7 @@ export function Modal({ title, onClose, children, wide }: ModalProps) {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="modal-backdrop" onMouseDown={(e) => !keepOnBackdrop && e.target === e.currentTarget && onClose()}>
       <div className={`modal${wide ? ' wide' : ''}`} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1} ref={ref}>
         <h2>{title}</h2>
         {children}

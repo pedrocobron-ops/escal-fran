@@ -116,6 +116,12 @@ export function effectiveDay(current: AppData, date: IsoDate): EffectiveDay {
 
   const uncovered: UncoveredSlot[] = [];
 
+  // Sala só precisa de ASB quando tem dentista atendendo naquela hora.
+  const roomActive = (roomId: Id | undefined, hour: number) => !!roomId && dentistsAt(dentists, roomId, hour).length > 0;
+  const needsCoverNow = (s: Pick<Slot, 'kind' | 'roomId' | 'hour'>) => needsCover(s.kind) && (s.kind !== 'sala' || roomActive(s.roomId, s.hour));
+  // Livre para cobrir: sem atribuição, apoio/recepção, ou parada numa sala sem dentista atendendo.
+  const isFreeSlot = (e: EffectiveSlot) => isFreeKind(e.kind) || (e.kind === 'sala' && !roomActive(e.roomId, e.hour));
+
   // 2. Substituições, na ordem das ausências.
   for (const absence of absences) {
     const absentSlots = data.base.slots.filter((s) => s.asbId === absence.asbId);
@@ -134,7 +140,7 @@ export function effectiveDay(current: AppData, date: IsoDate): EffectiveDay {
     }
     if (!isTeamSubstitute(absence)) {
       for (const s of absentSlots) {
-        if (needsCover(s.kind)) uncovered.push({ slot: s, absenceId: absence.id, reason: 'sem-substituta' });
+        if (needsCoverNow(s)) uncovered.push({ slot: s, absenceId: absence.id, reason: 'sem-substituta' });
       }
       continue;
     }
@@ -142,35 +148,31 @@ export function effectiveDay(current: AppData, date: IsoDate): EffectiveDay {
     const sub = asbById.get(subId);
     const subAvailable = sub !== undefined && sub.active && !absentIds.has(subId);
     for (const s of absentSlots) {
-      if (s.kind === 'almoco') continue; // almoço da ausente não precisa de cobertura
+      if (!needsCoverNow(s)) continue; // almoço, apoio ou sala sem dentista: nada a cobrir
       if (!subAvailable) {
-        if (needsCover(s.kind)) uncovered.push({ slot: s, absenceId: absence.id, reason: 'substituta-ausente', substituteId: subId });
+        uncovered.push({ slot: s, absenceId: absence.id, reason: 'substituta-ausente', substituteId: subId });
         continue;
       }
       if (!canAssignOn(sub, s.hour, extraShifts)) {
-        if (needsCover(s.kind)) uncovered.push({ slot: s, absenceId: absence.id, reason: 'substituta-fora-do-contrato', substituteId: subId });
+        uncovered.push({ slot: s, absenceId: absence.id, reason: 'substituta-fora-do-contrato', substituteId: subId });
         continue;
       }
       const mine = slots.filter((e) => e.hour === s.hour && e.who.type === 'asb' && e.who.asbId === subId);
-      const busy = mine.find((e) => !isFreeKind(e.kind));
+      const busy = mine.find((e) => !isFreeSlot(e));
       if (busy) {
-        if (needsCover(s.kind)) {
-          uncovered.push({ slot: s, absenceId: absence.id, reason: 'substituta-ocupada', busyWith: busy.kind, substituteId: subId });
-        }
+        uncovered.push({ slot: s, absenceId: absence.id, reason: 'substituta-ocupada', busyWith: busy.kind, substituteId: subId });
         continue;
       }
-      if (!needsCover(s.kind)) continue; // apoio da ausente: a substituta já está livre, nada a herdar
-      const inherited: EffectiveSlot = {
+      slots = slots.filter((e) => !(e.hour === s.hour && e.who.type === 'asb' && e.who.asbId === subId));
+      slots.push({
         hour: s.hour,
         kind: s.kind,
         roomId: s.roomId,
         who: { type: 'asb', asbId: subId },
         origin: 'substitute',
         coveringFor: absence.asbId,
-      };
-      const idx = slots.findIndex((e) => e.hour === s.hour && e.who.type === 'asb' && e.who.asbId === subId);
-      if (idx >= 0) slots[idx] = inherited;
-      else slots.push(inherited);
+        movedFrom: mine.find((e) => e.kind === 'sala')?.roomId,
+      });
     }
   }
 
@@ -185,33 +187,48 @@ export function effectiveDay(current: AppData, date: IsoDate): EffectiveDay {
     slots.push({ hour: o.hour, kind: o.kind, roomId: o.roomId, who: { type: 'asb', asbId: o.asbId }, origin: 'override' });
   }
 
-  // 4. Remanejamento automático: sala com dentista e sem ASB recebe uma ASB livre
-  //    (a ASB de um dentista de folga, ou alguém de hora extra sem atribuição).
+  // 4. Remanejamento automático. Recebe quem está livre: a ASB de um dentista de folga
+  //    (prioridade 1) ou alguém de hora extra sem atribuição (prioridade 2). Quem foi
+  //    ajustado à mão naquele horário não é mexido.
   const presentAsbs = data.asbs.filter((a) => a.active && !absentIds.has(a.id)).sort((a, b) => a.name.localeCompare(b.name));
   const roomsInOrder = [...data.rooms].sort((a, b) => a.order - b.order);
+  const pickFree = (hour: number): { asb: Asb; priority: number; from?: Id } | undefined => {
+    let best: { asb: Asb; priority: number; from?: Id } | undefined;
+    for (const asb of presentAsbs) {
+      if (!canAssignOn(asb, hour, extraShifts)) continue;
+      if (overriddenKeys.has(`${asb.id}@${hour}`)) continue;
+      const mine = slots.filter((e) => e.hour === hour && e.who.type === 'asb' && e.who.asbId === asb.id);
+      let priority: number | undefined;
+      let from: Id | undefined;
+      if (mine.length === 0 && isExtra(asb.id, hour)) priority = 2;
+      else if (
+        mine.length > 0 &&
+        mine.every((e) => e.kind === 'sala' && e.roomId && !roomActive(e.roomId, hour) && dentistsAt(dentistsOff, e.roomId, hour).length > 0)
+      ) {
+        priority = 1;
+        from = mine[0].roomId;
+      }
+      if (priority !== undefined && (!best || priority < best.priority)) best = { asb, priority, from };
+    }
+    return best;
+  };
   for (const hour of HOURS) {
     for (const room of roomsInOrder) {
-      if (dentistsAt(dentists, room.id, hour).length === 0) continue;
+      if (!roomActive(room.id, hour)) continue;
       if (slots.some((e) => e.kind === 'sala' && e.roomId === room.id && e.hour === hour)) continue;
-      let best: { asb: Asb; priority: number; from?: Id } | undefined;
-      for (const asb of presentAsbs) {
-        if (!canAssignOn(asb, hour, extraShifts)) continue;
-        const mine = slots.filter((e) => e.hour === hour && e.who.type === 'asb' && e.who.asbId === asb.id);
-        let priority: number | undefined;
-        let from: Id | undefined;
-        if (mine.length === 0 && isExtra(asb.id, hour)) priority = 2;
-        else if (
-          mine.length > 0 &&
-          mine.every((e) => e.kind === 'sala' && e.roomId && dentistsAt(dentists, e.roomId, hour).length === 0 && dentistsAt(dentistsOff, e.roomId, hour).length > 0)
-        ) {
-          priority = 1;
-          from = mine[0].roomId;
-        }
-        if (priority !== undefined && (!best || priority < best.priority)) best = { asb, priority, from };
-      }
+      const best = pickFree(hour);
       if (!best) continue;
-      slots = slots.filter((e) => !(e.hour === hour && e.who.type === 'asb' && e.who.asbId === best!.asb.id));
+      slots = slots.filter((e) => !(e.hour === hour && e.who.type === 'asb' && e.who.asbId === best.asb.id));
       slots.push({ hour, kind: 'sala', roomId: room.id, who: { type: 'asb', asbId: best.asb.id }, origin: 'auto', movedFrom: best.from });
+    }
+    // CME e almoxarifado de quem faltou também recebem quem está livre.
+    for (const u of uncovered) {
+      if (u.slot.hour !== hour || (u.slot.kind !== 'cme' && u.slot.kind !== 'almox')) continue;
+      if (slots.some((e) => e.hour === hour && e.coveringFor === u.slot.asbId && e.kind === u.slot.kind)) continue;
+      const best = pickFree(hour);
+      if (!best) continue;
+      slots = slots.filter((e) => !(e.hour === hour && e.who.type === 'asb' && e.who.asbId === best.asb.id));
+      slots.push({ hour, kind: u.slot.kind, who: { type: 'asb', asbId: best.asb.id }, origin: 'auto', movedFrom: best.from, coveringFor: u.slot.asbId });
     }
   }
 
@@ -284,23 +301,25 @@ export function analyze(current: AppData, day: EffectiveDay): Alert[] {
     });
   }
   const autos = day.slots.filter((s) => s.origin === 'auto' && s.who.type === 'asb');
-  const autoGroups = new Map<string, { asbId: Id; roomId?: Id; from?: Id; hours: number[] }>();
+  const autoGroups = new Map<string, { asbId: Id; kind: Slot['kind']; roomId?: Id; from?: Id; covering?: Id; hours: number[] }>();
   for (const s of autos) {
     if (s.who.type !== 'asb') continue;
-    const k = `${s.who.asbId}|${s.roomId}|${s.movedFrom ?? ''}`;
-    const g = autoGroups.get(k) ?? { asbId: s.who.asbId, roomId: s.roomId, from: s.movedFrom, hours: [] };
+    const k = `${s.who.asbId}|${s.kind}|${s.roomId}|${s.movedFrom ?? ''}|${s.coveringFor ?? ''}`;
+    const g = autoGroups.get(k) ?? { asbId: s.who.asbId, kind: s.kind, roomId: s.roomId, from: s.movedFrom, covering: s.coveringFor, hours: [] };
     g.hours.push(s.hour);
     autoGroups.set(k, g);
   }
   for (const g of autoGroups.values()) {
     const name = asbById.get(g.asbId)?.name ?? g.asbId;
+    const where = g.kind === 'sala' ? `na ${roomName(g.roomId ?? '')}` : `no ${SLOT_KIND_LABEL[g.kind]}`;
+    const covering = g.covering ? `, cobrindo ${asbById.get(g.covering)?.name ?? '?'}` : '';
     for (const [a, b] of groupHours(g.hours)) {
       alerts.push({
         level: 'info',
         code: 'remanejada',
         message: g.from
-          ? `${name} remanejada da ${roomName(g.from)} para a ${roomName(g.roomId ?? '')} (${formatRange(a, b)}).`
-          : `${name} (hora extra) colocada na ${roomName(g.roomId ?? '')} (${formatRange(a, b)}).`,
+          ? `${name} remanejada da ${roomName(g.from)} para ${g.kind === 'sala' ? 'a ' + roomName(g.roomId ?? '') : 'o ' + SLOT_KIND_LABEL[g.kind]} (${formatRange(a, b)})${covering}.`
+          : `${name} (hora extra) colocada ${where} (${formatRange(a, b)})${covering}.`,
         hour: a,
         roomId: g.roomId,
         asbId: g.asbId,
@@ -407,8 +426,9 @@ export function analyze(current: AppData, day: EffectiveDay): Alert[] {
   for (const u of day.uncovered) {
     const absent = asbById.get(u.slot.asbId)?.name ?? u.slot.asbId;
     const where = u.slot.kind === 'sala' && u.slot.roomId ? roomName(u.slot.roomId) : SLOT_KIND_LABEL[u.slot.kind];
-    // Se o remanejamento automático já cobriu a sala, não é mais um problema.
+    // Se alguém já cobriu (remanejamento automático ou ajuste do dia), não é mais um problema.
     if (u.slot.kind === 'sala' && day.slots.some((s) => s.kind === 'sala' && s.roomId === u.slot.roomId && s.hour === u.slot.hour)) continue;
+    if (u.slot.kind !== 'sala' && day.slots.some((s) => s.hour === u.slot.hour && s.kind === u.slot.kind && s.coveringFor === u.slot.asbId)) continue;
     if (u.reason === 'sem-substituta') {
       alerts.push({
         level: 'aviso',

@@ -108,6 +108,8 @@ export interface ExtraShift {
   start: number;
   end: number;
   note?: string;
+  /** Quando a hora extra foi criada para cobrir uma ausência, o id dela. */
+  absenceId?: Id;
 }
 
 /** Folga ou ausência de dentista: nesses dias ele não atende e a ASB dele fica livre. */

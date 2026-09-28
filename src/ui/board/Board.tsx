@@ -441,9 +441,9 @@ function slotTag(s: EffectiveSlot, asbById: Map<string, Asb>): string | undefine
   const parts: string[] = [];
   if (s.coveringFor) parts.push(`cobre ${asbById.get(s.coveringFor)?.name ?? '?'}`);
   if (s.kind === 'apoio' && s.roomId) parts.push('apoio');
-  if (s.origin === 'auto') parts.push('remanejada');
+  if (s.origin === 'auto') parts.push(s.movedFrom ? 'remanejada' : 'colocada pelo app');
   if (s.origin === 'override') parts.push('ajuste');
-  if (s.extra) parts.push('extra');
+  if (s.extra) parts.push('hora extra');
   return parts.length > 0 ? parts.join(', ') : undefined;
 }
 

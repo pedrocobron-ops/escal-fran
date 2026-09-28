@@ -59,6 +59,24 @@ export function extraShiftsBetween(data: Pick<AppData, 'extraShifts'>, from: Iso
   return (data.extraShifts ?? []).filter((e) => e.date >= from && e.date <= to);
 }
 
+/** Horas extras que valem: tira as de dias em que a própria ASB está ausente. */
+export function validExtraShiftsBetween(data: Pick<AppData, 'extraShifts' | 'absences'>, from: IsoDate, to: IsoDate): ExtraShift[] {
+  return extraShiftsBetween(data, from, to).filter((e) => !absenceFor(data, e.asbId, e.date));
+}
+
+/** Horas extras da mesma ASB que se sobrepõem a um horário numa data. */
+export function overlappingExtras(data: Pick<AppData, 'extraShifts'>, asbId: Id, date: IsoDate, start: number, end: number, exceptId?: Id): ExtraShift[] {
+  return (data.extraShifts ?? []).filter((e) => e.id !== exceptId && e.asbId === asbId && e.date === date && e.start < end && e.end > start);
+}
+
+/** Partes de um horário que ficam fora do contrato (o que vira hora extra de verdade). */
+export function outsideContract(start: number, end: number, contract: { start: number; end: number }): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  if (start < contract.start) out.push([start, Math.min(end, contract.start)]);
+  if (end > contract.end) out.push([Math.max(start, contract.end), end]);
+  return out.filter(([a, b]) => b > a);
+}
+
 /** Horas de uma hora extra que ficam fora do contrato (as que contam para pagamento). */
 export function paidExtraHours(e: ExtraShift, contract: { start: number; end: number } | undefined): number {
   let n = 0;
