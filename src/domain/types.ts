@@ -128,6 +128,24 @@ export interface DaySlot {
   roomId?: Id;
 }
 
+/** Campos da estrutura da escala que mudam com o tempo e precisam de histórico. */
+export const STRUCTURE_KEYS = ['rooms', 'dentists', 'asbs', 'base', 'tasks', 'openDays'] as const;
+export type StructureKey = (typeof STRUCTURE_KEYS)[number];
+
+/**
+ * Como a estrutura estava até `until` (inclusivo). Guarda só os campos que
+ * mudaram logo depois dessa data; os outros seguem iguais ao próximo registro.
+ */
+export interface StructureSnapshot {
+  until: IsoDate;
+  rooms?: Room[];
+  dentists?: Dentist[];
+  asbs?: Asb[];
+  base?: BaseSchedule;
+  tasks?: Task[];
+  openDays?: number[];
+}
+
 export interface AppData {
   version: number;
   rooms: Room[];
@@ -147,6 +165,10 @@ export interface AppData {
   dentistAbsences?: DentistAbsence[];
   /** Ajustes feitos no Modo Dia, por data. */
   dayOverrides?: DaySlot[];
+  /** Histórico da estrutura, do mais antigo para o mais recente. */
+  history?: StructureSnapshot[];
+  /** Primeiro dia em que o app registrou a escala neste navegador. */
+  historySince?: IsoDate;
 }
 
 /** Blocos de hora do CEO: 07→08 até 18→19. */

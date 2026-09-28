@@ -13,6 +13,7 @@ export function SettingsScreen() {
   const confirm = useConfirm();
   const markBackup = useStore((s) => s.markBackup);
   const lastBackupAt = useStore((s) => s.lastBackupAt);
+  const persisted = useStore((s) => s.persisted);
   const fileRef = useRef<HTMLInputElement>(null);
   const [notice, setNotice] = useState<{ title: string; message: string } | null>(null);
   const [exported, setExported] = useState<{ url: string; name: string } | null>(null);
@@ -60,7 +61,7 @@ export function SettingsScreen() {
   const reset = async () => {
     const ok = await confirm({
       title: 'Voltar para a escala inicial?',
-      message: 'Tudo o que foi alterado (quadro, equipe, tarefas e ausências) volta ao que veio dos documentos do CEO. Dá para desfazer com Ctrl+Z.',
+      message: 'Tudo o que foi alterado (quadro, equipe, tarefas, ausências, horas extras, folgas de dentista e o histórico dos dias passados) volta ao que veio dos documentos do CEO. Exporte um backup antes se quiser guardar. Dá para desfazer com Ctrl+Z enquanto a página estiver aberta.',
       confirmLabel: 'Voltar para a inicial',
       danger: true,
     });
@@ -84,7 +85,16 @@ export function SettingsScreen() {
 
       <section className="card">
         <h2>Backup</h2>
-        <p className="muted small">Os dados ficam salvos só neste navegador. Exporte um arquivo de vez em quando e guarde num lugar seguro. Para usar em outro computador, importe o arquivo lá.</p>
+        <p className="muted small">
+          Os dados ficam salvos neste navegador, neste computador, e continuam salvos ao fechar a página. Eles se perdem se alguém limpar os dados do navegador, se usar janela anônima, ou, no iPhone e no Safari, se o site ficar muitos dias sem ser aberto. Exporte um arquivo de vez em quando e guarde num lugar seguro. Para usar em outro computador, importe o arquivo lá.
+        </p>
+        <p className="small">
+          {persisted === true
+            ? 'Armazenamento protegido: o navegador confirmou que não vai apagar os dados sozinho.'
+            : persisted === false
+              ? 'O navegador não garantiu proteção dos dados. Use sempre o mesmo navegador (Chrome ou Edge no computador são os mais seguros) e mantenha o backup em dia.'
+              : 'Este navegador não informa se protege os dados. Mantenha o backup em dia.'}
+        </p>
         <p className="small">
           {lastBackupAt
             ? `Último backup exportado em ${formatDate(lastBackupAt)} (${diffDays(lastBackupAt, todayIso())} dia(s) atrás).`

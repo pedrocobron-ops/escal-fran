@@ -149,6 +149,10 @@ export function parseBackup(json: string): AppData {
     need(isArray(raw.dentistAbsences), 'O campo "dentistAbsences" precisa ser uma lista.');
     (raw.dentistAbsences as unknown[]).forEach((a, i) => need(isRecord(a) && isStr(a.id) && isStr(a.dentistId) && isIso(a.from) && isIso(a.to), `Folga de dentista ${i + 1} incompleta.`));
   }
+  if (raw.history !== undefined) {
+    need(isArray(raw.history), 'O campo "history" precisa ser uma lista.');
+    (raw.history as unknown[]).forEach((h, i) => need(isRecord(h) && isIso(h.until), `Registro de histórico ${i + 1} sem data.`));
+  }
   if (raw.dayOverrides !== undefined) {
     need(isArray(raw.dayOverrides), 'O campo "dayOverrides" precisa ser uma lista.');
     (raw.dayOverrides as unknown[]).forEach((o, i) => need(isRecord(o) && isStr(o.id) && isStr(o.asbId) && isIso(o.date) && isNum(o.hour) && isStr(o.kind) && [...SLOT_KINDS, 'livre'].includes(o.kind), `Ajuste de dia ${i + 1} incompleto.`));
@@ -167,6 +171,7 @@ export function migrate(data: AppData): AppData {
   if (!Array.isArray(out.extraShifts)) out.extraShifts = [];
   if (!Array.isArray(out.dentistAbsences)) out.dentistAbsences = [];
   if (!Array.isArray(out.dayOverrides)) out.dayOverrides = [];
+  if (!Array.isArray(out.history)) out.history = [];
   out.asbs = out.asbs.map((a) => ({ ...a, active: a.active !== false, lunch: a.lunch === true }));
   return out;
 }

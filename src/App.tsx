@@ -44,6 +44,20 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // Ao fechar, trocar de aba ou bloquear o celular, grava na hora o que estiver pendente.
+  useEffect(() => {
+    const flush = () => useStore.getState().flush();
+    const onVisibility = () => { if (document.visibilityState === 'hidden') flush(); };
+    window.addEventListener('pagehide', flush);
+    window.addEventListener('beforeunload', flush);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      window.removeEventListener('beforeunload', flush);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, []);
+
   return (
     <ConfirmProvider>
       <header className="app-header">

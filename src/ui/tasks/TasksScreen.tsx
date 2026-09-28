@@ -3,7 +3,7 @@ import { DndContext, KeyboardSensor, MouseSensor, TouchSensor, closestCenter, us
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { Asb, Person, Task, TaskMode, TaskResolution } from '../../domain';
-import { WEEKDAY_LABEL, WEEKDAY_SHORT, formatDate, formatHour, resolveTask, rotationTitular, todayIso, weekdayOf } from '../../domain';
+import { WEEKDAY_LABEL, WEEKDAY_SHORT, dataForDate, formatDate, formatHour, resolveTask, rotationTitular, todayIso, weekdayOf } from '../../domain';
 import { newId, useData, useStore } from '../../store/useStore';
 import { colorMap } from '../colors';
 import { Modal, useConfirm } from '../common/Modal';
@@ -60,7 +60,8 @@ function personLabel(data: ReturnType<typeof useData>, p: Person): string {
 }
 
 function TaskCard({ task, date, colors, onEdit, onRemove }: { task: Task; date: string; colors: Map<string, string>; onEdit: () => void; onRemove: () => void }) {
-  const data = useData();
+  const current = useData();
+  const data = dataForDate(current, date);
   const apply = useStore((s) => s.apply);
   const res: TaskResolution = resolveTask(data, task, date);
   const a = task.assignment;

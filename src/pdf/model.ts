@@ -4,7 +4,7 @@ import type { Absence, AppData, Asb, EffectiveDay, IsoDate, Task } from '../doma
 import {
   HOURS, OPEN_END, OPEN_START, SLOT_KIND_LABEL, WEEKDAY_LABEL, WEEKDAY_SHORT, absencesBetween, analyze, baseDay, dentistAbsencesBetween, dentistsAt, extraShiftsBetween,
   effectiveDay, firstOfMonth, formatDate, formatDayMonth, formatMonth, formatRange, isExternalSubstitute, isTeamSubstitute,
-  lastOfMonth, monthRotation, resolveTask, todayIso, weekdayOf, weeksOfMonth,
+  dataForDate, lastOfMonth, monthRotation, resolveTask, todayIso, weekdayOf, weeksOfMonth,
 } from '../domain';
 
 const AFTERNOON_START = 13;
@@ -152,7 +152,9 @@ export function roomRows(data: AppData, day: EffectiveDay): { roomNames: string[
   return { roomNames: rooms.map((r) => r.name), rows };
 }
 
-export function monthPdfModel(data: AppData, year: number, month: number, now: Date = new Date()): MonthPdfModel {
+export function monthPdfModel(current: AppData, year: number, month: number, now: Date = new Date()): MonthPdfModel {
+  // Mês passado: escala base, tarefas e nomes como estavam no fim do mês.
+  const data = dataForDate(current, lastOfMonth(year, month));
   const weeks = weeksOfMonth(year, month);
   const day = baseDay(data);
   const rotations = data.tasks.filter((t): t is Task & { assignment: { mode: 'rotation' } } => t.assignment.mode === 'rotation');
@@ -234,7 +236,8 @@ const SUPPORT: Array<{ label: string; kinds: Array<EffectiveDay['slots'][number]
   { label: 'Almoço', kinds: ['almoco'] },
 ];
 
-export function dayPdfModel(data: AppData, date: IsoDate, now: Date = new Date()): DayPdfModel {
+export function dayPdfModel(current: AppData, date: IsoDate, now: Date = new Date()): DayPdfModel {
+  const data = dataForDate(current, date);
   const day = effectiveDay(data, date);
   const { roomNames, rows } = roomRows(data, day);
   const fullRows = rows.map((r, i) => ({

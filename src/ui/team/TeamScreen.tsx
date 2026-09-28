@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { Asb, Dentist, Room } from '../../domain';
-import { WEEKDAY_SHORT, formatRange } from '../../domain';
+import { WEEKDAY_SHORT, formatRange, todayIso } from '../../domain';
 import { newId, removeAsb, removeDentist, removeRoom, useData, useStore } from '../../store/useStore';
 import { ASB_PALETTE, colorMap } from '../colors';
 import { Modal, useConfirm } from '../common/Modal';
@@ -20,19 +20,19 @@ export function TeamScreen() {
     const slots = data.base.slots.filter((s) => s.asbId === a.id).length;
     const ok = await confirm({
       title: `Remover ${a.name}?`,
-      message: <>As {slots} fichas dela saem do quadro e ela sai dos rodízios e das listas fixas. As ausências dela também são removidas.</>,
+      message: <>As {slots} fichas dela saem do quadro e ela sai dos rodízios e das listas fixas. Ausências e horas extras de hoje em diante também saem. Os dias que já passaram continuam no histórico como foram.</>,
       confirmLabel: 'Remover',
       danger: true,
     });
-    if (ok) apply((d) => removeAsb(d, a.id));
+    if (ok) apply((d) => removeAsb(d, a.id, todayIso()));
   };
   const delDentist = async (x: Dentist) => {
-    const ok = await confirm({ title: `Remover ${x.name}?`, message: 'As tarefas que seguem esse dentista também são removidas.', confirmLabel: 'Remover', danger: true });
-    if (ok) apply((d) => removeDentist(d, x.id));
+    const ok = await confirm({ title: `Remover ${x.name}?`, message: 'As tarefas que seguem esse dentista também são removidas. Os dias que já passaram continuam no histórico como foram.', confirmLabel: 'Remover', danger: true });
+    if (ok) apply((d) => removeDentist(d, x.id, todayIso()));
   };
   const delRoom = async (r: Room) => {
     const ok = await confirm({ title: `Remover ${r.name}?`, message: 'Os dentistas dessa sala, as fichas nela e as tarefas que seguem a sala são removidos.', confirmLabel: 'Remover', danger: true });
-    if (ok) apply((d) => removeRoom(d, r.id));
+    if (ok) apply((d) => removeRoom(d, r.id, todayIso()));
   };
 
   return (

@@ -16,7 +16,7 @@ import {
 } from '@dnd-kit/core';
 import type { Alert, AppData, Asb, EffectiveDay, EffectiveSlot, IsoDate, SlotKind } from '../../domain';
 import {
-  HOURS, WEEKDAY_LABEL, allowedHours, analyze, baseDay, canAssign, canAssignOn, dentistsAt, effectiveDay, formatBlock, formatDate,
+  HOURS, WEEKDAY_LABEL, allowedHours, dataForDate, analyze, baseDay, canAssign, canAssignOn, dentistsAt, effectiveDay, formatBlock, formatDate,
   formatHour, formatRange, isExternalSubstitute, isTeamSubstitute, proteseAlerts, todayIso, validHours, weekdayOf,
 } from '../../domain';
 import {
@@ -68,7 +68,7 @@ function targetOf(column: Column): CellTarget {
 }
 
 export function Board() {
-  const data = useData();
+  const current = useData();
   const apply = useStore((s) => s.apply);
   const confirm = useConfirm();
   const [mode, setMode] = useState<Mode>('base');
@@ -88,6 +88,8 @@ export function Board() {
   }, []);
 
   const isDay = mode === 'day';
+  // No Modo Dia de uma data passada, salas, ASBs e dentistas vêm de como eram naquele dia.
+  const data = useMemo(() => (isDay ? dataForDate(current, date) : current), [current, isDay, date]);
   const columns = useMemo(() => columnsFor(data), [data]);
   const colors = useMemo(() => colorMap(data.asbs), [data.asbs]);
   const asbById = useMemo(() => new Map(data.asbs.map((a) => [a.id, a])), [data.asbs]);
@@ -248,7 +250,7 @@ export function Board() {
     if (ok) apply(clearSchedule);
   };
 
-  const isEmpty = data.asbs.length === 0 && data.base.slots.length === 0;
+  const isEmpty = current.asbs.length === 0 && current.base.slots.length === 0;
   if (isEmpty) return <EmptyState />;
 
   const overridesCount = isDay ? day.overrides.length : 0;
@@ -288,6 +290,13 @@ export function Board() {
         )}
       </div>
 
+      {isDay && date < todayIso() && (
+        <p className="muted small" style={{ marginTop: -4 }}>
+          Dia passado: o quadro mostra a escala como estava nesse dia
+          {current.historySince && date < current.historySince ? ` (o registro começou em ${formatDate(current.historySince)}; antes disso vale a escala mais antiga registrada)` : ''}.
+          Ajustes aqui servem para registrar o que aconteceu de fato.
+        </p>
+      )}
       {isDay && <DaySummary day={day} data={data} />}
 
       <DndContext sensors={sensors} collisionDetection={collision} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setActive(null)}>

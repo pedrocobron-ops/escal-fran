@@ -24,7 +24,7 @@ describe('persistência', () => {
   it('exporta e importa backup sem perder nada', () => {
     const d = seedData();
     const json = exportBackup(d);
-    expect(parseBackup(json)).toEqual({ ...d, protese: [], extraShifts: [], dentistAbsences: [], dayOverrides: [] });
+    expect(parseBackup(json)).toEqual({ ...d, protese: [], extraShifts: [], dentistAbsences: [], dayOverrides: [], history: [] });
   });
 
   it('rejeita backup inválido com mensagem em português', () => {

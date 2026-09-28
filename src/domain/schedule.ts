@@ -19,6 +19,7 @@ import { HOURS, SLOT_KIND_LABEL } from './types';
 import { diffDays, weekdayOf } from './dates';
 import { absencesOn, dentistAbsencesOn, extraShiftsOn, isExternalSubstitute, isTeamSubstitute } from './absences';
 import { formatHour, formatRange, groupHours, hoursBetween } from './time';
+import { dataForDate } from './history';
 
 const DEFAULT_DAYS = [1, 2, 3, 4, 5];
 
@@ -81,7 +82,9 @@ function needsCover(kind: Slot['kind']): boolean {
  * folga ou hora extra) para salas com dentista e sem ASB.
  * Não resolve tarefas (ver tasks.ts).
  */
-export function effectiveDay(data: AppData, date: IsoDate): EffectiveDay {
+export function effectiveDay(current: AppData, date: IsoDate): EffectiveDay {
+  // Dia passado: usa a estrutura (salas, dentistas, ASBs, escala base) como era nesse dia.
+  const data = dataForDate(current, date);
   const weekday = weekdayOf(date);
   const open = data.openDays.includes(weekday);
   const activeIds = new Set(data.asbs.filter((a) => a.active).map((a) => a.id));
@@ -263,7 +266,8 @@ function personName(data: AppData, p: Person): string {
 }
 
 /** Validações da seção 5.2 sobre um dia (efetivo ou base), mais os avisos dos ajustes do dia. */
-export function analyze(data: AppData, day: EffectiveDay): Alert[] {
+export function analyze(current: AppData, day: EffectiveDay): Alert[] {
+  const data = dataForDate(current, day.date);
   const alerts: Alert[] = [];
   if (!day.open) return alerts;
   const roomName = (id: Id) => data.rooms.find((r) => r.id === id)?.name ?? id;

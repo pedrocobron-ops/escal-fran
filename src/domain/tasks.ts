@@ -4,6 +4,7 @@ import type { AppData, EffectiveDay, Id, IsoDate, Person, Task, TaskMode } from 
 import { mod, monthsSince, weekdayOf, weeksOfMonth, weeksSince, type MonthWeek } from './dates';
 import { absenceFor, isExternalSubstitute, isTeamSubstitute } from './absences';
 import { effectiveDay } from './schedule';
+import { dataForDate } from './history';
 import { formatHour, formatRange } from './time';
 
 export type RotationAssignment = Extract<TaskMode, { mode: 'rotation' }>;
@@ -84,7 +85,10 @@ function rotationHolder(
  * Resolve quem faz a tarefa numa data. `day` pode ser passado para reaproveitar
  * a escala efetiva já calculada.
  */
-export function resolveTask(data: AppData, task: Task, date: IsoDate, day?: EffectiveDay): TaskResolution {
+export function resolveTask(current: AppData, taskNow: Task, date: IsoDate, day?: EffectiveDay): TaskResolution {
+  // Dia passado: tarefas, ordem dos rodízios e nomes como eram nesse dia.
+  const data = dataForDate(current, date);
+  const task = data.tasks.find((t) => t.id === taskNow.id) ?? taskNow;
   const weekday = weekdayOf(date);
   const base: TaskResolution = { taskId: task.id, applies: true, holders: [], reason: '' };
   if (!data.openDays.includes(weekday) || !task.days.includes(weekday)) {
@@ -148,7 +152,8 @@ export function resolveTask(data: AppData, task: Task, date: IsoDate, day?: Effe
 }
 
 /** Todas as tarefas de uma data, reaproveitando a escala efetiva. */
-export function resolveTasksForDate(data: AppData, date: IsoDate): TaskResolution[] {
+export function resolveTasksForDate(current: AppData, date: IsoDate): TaskResolution[] {
+  const data = dataForDate(current, date);
   const day = effectiveDay(data, date);
   return data.tasks.map((t) => resolveTask(data, t, date, day));
 }

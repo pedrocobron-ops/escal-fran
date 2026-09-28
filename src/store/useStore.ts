@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { AppData, DaySlot, DaySlotKind, Id, IsoDate, Slot, SlotKind } from '../domain';
-import { canAssign, nextProteseRecords, todayIso } from '../domain';
+import { addDays, canAssign, nextProteseRecords, recordHistory, todayIso } from '../domain';
 import { loadInitial, seedData, type StorageAdapter } from './storage';
 
 const HISTORY_LIMIT = 100;
@@ -35,6 +35,10 @@ interface StoreState {
   canRedo(): boolean;
   resetToSeed(): void;
   markBackup(): void;
+  /** Grava na hora o que estiver pendente (ao fechar ou esconder a página). */
+  flush(): void;
+  /** O navegador garantiu armazenamento persistente? null = não suportado ou ainda não pedido. */
+  persisted: boolean | null;
 }
 
 function readKey(key: string): IsoDate | null {
@@ -59,19 +63,36 @@ function clock(now: Date = new Date()): string {
 
 export const useStore = create<StoreState>((set, get) => {
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
+  let pending: AppData | null = null;
+
+  async function saveNow(data: AppData) {
+    const { adapter } = get();
+    if (!adapter) return;
+    try {
+      await adapter.save(data);
+      set({ savedAt: clock(), saving: false, saveError: null });
+    } catch (e) {
+      const quota = e instanceof DOMException && (e.name === 'QuotaExceededError' || e.code === 22);
+      set({
+        saving: false,
+        saveError: quota
+          ? 'o armazenamento do navegador está cheio. Exporte um backup em Ajustes.'
+          : e instanceof Error ? e.message : 'Não foi possível salvar.',
+      });
+    }
+  }
 
   function scheduleSave(data: AppData) {
     const { adapter } = get();
     if (!adapter) return;
     if (saveTimer) clearTimeout(saveTimer);
+    pending = data;
     set({ saving: true });
-    saveTimer = setTimeout(async () => {
-      try {
-        await adapter.save(data);
-        set({ savedAt: clock(), saving: false, saveError: null });
-      } catch (e) {
-        set({ saving: false, saveError: e instanceof Error ? e.message : 'Não foi possível salvar.' });
-      }
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      const d = pending;
+      pending = null;
+      if (d) void saveNow(d);
     }, 150);
   }
 
@@ -101,12 +122,25 @@ export const useStore = create<StoreState>((set, get) => {
     adapter: null,
     lastBackupAt: readKey(LAST_BACKUP_KEY),
     firstChangeAt: readKey(FIRST_CHANGE_KEY),
+    persisted: null,
 
     async init(adapter) {
       const { data, fromSeed } = await loadInitial(adapter);
       data.protese = nextProteseRecords(data, todayIso());
+      const newSince = !data.historySince;
+      if (newSince) data.historySince = todayIso();
       set({ adapter, data, loaded: true, past: [], future: [] });
-      if (fromSeed) scheduleSave(data);
+      if (fromSeed || newSince) scheduleSave(data);
+      // Pede ao navegador para não apagar os dados sozinho (quando ele permite).
+      try {
+        const storage = typeof navigator !== 'undefined' ? navigator.storage : undefined;
+        if (storage?.persist) {
+          const already = storage.persisted ? await storage.persisted() : false;
+          set({ persisted: already || (await storage.persist()) });
+        }
+      } catch {
+        set({ persisted: null });
+      }
     },
 
     apply(mutator) {
@@ -114,13 +148,25 @@ export const useStore = create<StoreState>((set, get) => {
       if (!data) return;
       const next = structuredClone(data);
       mutator(next);
+      // Guarda como a estrutura estava até ontem, para os dias passados não mudarem.
+      next.history = recordHistory(data, next, todayIso());
       commit(next, { pushHistory: true });
     },
 
     replace(data) {
       const next = structuredClone(data);
       next.protese = nextProteseRecords(next, todayIso());
+      if (!next.historySince) next.historySince = todayIso();
       commit(next, { pushHistory: true });
+    },
+
+    flush() {
+      if (!saveTimer || !pending) return;
+      clearTimeout(saveTimer);
+      saveTimer = null;
+      const d = pending;
+      pending = null;
+      void saveNow(d);
     },
 
     undo() {
@@ -235,13 +281,27 @@ export function clearSchedule(draft: AppData): void {
   draft.base.slots = [];
 }
 
-/** Remove uma ASB e todas as referências a ela. */
-export function removeAsb(draft: AppData, asbId: Id): void {
+/**
+ * Tira do período que ainda vai acontecer (a partir de `today`). Registros só do
+ * passado ficam, para os dias passados continuarem mostrando o que aconteceu.
+ * Sem `today`, remove tudo.
+ */
+function keepPast<T extends { from: IsoDate; to: IsoDate }>(list: T[], match: (x: T) => boolean, today?: IsoDate): T[] {
+  const out: T[] = [];
+  for (const x of list) {
+    if (!match(x)) out.push(x);
+    else if (today && x.to < today) out.push(x);
+    else if (today && x.from < today) out.push({ ...x, to: addDays(today, -1) });
+  }
+  return out;
+}
+
+/** Remove uma ASB e as referências a ela. Com `today`, preserva o que já passou. */
+export function removeAsb(draft: AppData, asbId: Id, today?: IsoDate): void {
   draft.asbs = draft.asbs.filter((a) => a.id !== asbId);
   draft.base.slots = draft.base.slots.filter((s) => s.asbId !== asbId);
-  draft.absences = draft.absences
-    .filter((a) => a.asbId !== asbId)
-    .map((a) => (a.substitute && 'asbId' in a.substitute && a.substitute.asbId === asbId ? { ...a, substitute: undefined } : a));
+  draft.absences = keepPast(draft.absences, (a) => a.asbId === asbId, today)
+    .map((a) => (a.substitute && 'asbId' in a.substitute && a.substitute.asbId === asbId && !(today && a.to < today) ? { ...a, substitute: undefined } : a));
   draft.tasks = draft.tasks.map((t) => {
     const a = t.assignment;
     if (a.mode === 'rotation') return { ...t, assignment: { ...a, order: a.order.filter((id) => id !== asbId) } };
@@ -249,22 +309,22 @@ export function removeAsb(draft: AppData, asbId: Id): void {
     return t;
   });
   draft.protese = (draft.protese ?? []).filter((p) => p.asbId !== asbId);
-  draft.extraShifts = (draft.extraShifts ?? []).filter((e) => e.asbId !== asbId);
-  draft.dayOverrides = (draft.dayOverrides ?? []).filter((o) => o.asbId !== asbId);
+  draft.extraShifts = (draft.extraShifts ?? []).filter((e) => e.asbId !== asbId || (today !== undefined && e.date < today));
+  draft.dayOverrides = (draft.dayOverrides ?? []).filter((o) => o.asbId !== asbId || (today !== undefined && o.date < today));
 }
 
-export function removeDentist(draft: AppData, dentistId: Id): void {
+export function removeDentist(draft: AppData, dentistId: Id, today?: IsoDate): void {
   draft.dentists = draft.dentists.filter((d) => d.id !== dentistId);
   draft.tasks = draft.tasks.filter((t) => !(t.assignment.mode === 'dentist' && t.assignment.dentistId === dentistId));
   draft.protese = (draft.protese ?? []).filter((p) => p.dentistId !== dentistId);
-  draft.dentistAbsences = (draft.dentistAbsences ?? []).filter((a) => a.dentistId !== dentistId);
+  draft.dentistAbsences = keepPast(draft.dentistAbsences ?? [], (a) => a.dentistId === dentistId, today);
 }
 
-export function removeRoom(draft: AppData, roomId: Id): void {
+export function removeRoom(draft: AppData, roomId: Id, today?: IsoDate): void {
   draft.rooms = draft.rooms.filter((r) => r.id !== roomId);
   draft.base.slots = draft.base.slots.filter((s) => !(s.kind === 'sala' && s.roomId === roomId));
-  draft.dayOverrides = (draft.dayOverrides ?? []).filter((o) => !(o.kind === 'sala' && o.roomId === roomId));
-  for (const d of draft.dentists.filter((x) => x.roomId === roomId)) removeDentist(draft, d.id);
+  draft.dayOverrides = (draft.dayOverrides ?? []).filter((o) => !(o.kind === 'sala' && o.roomId === roomId) || (today !== undefined && o.date < today));
+  for (const d of draft.dentists.filter((x) => x.roomId === roomId)) removeDentist(draft, d.id, today);
   draft.tasks = draft.tasks.filter((t) => !(t.assignment.mode === 'room' && t.assignment.roomId === roomId));
 }
 

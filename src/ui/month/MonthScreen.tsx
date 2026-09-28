@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { Task } from '../../domain';
 import {
-  absencesBetween, dentistAbsencesBetween, extraShiftsBetween, firstOfMonth, formatDate, formatDayMonth, formatMonth, formatRange,
+  absencesBetween, dataForDate, dentistAbsencesBetween, extraShiftsBetween, firstOfMonth, formatDate, formatDayMonth, formatMonth, formatRange,
   isExternalSubstitute, isTeamSubstitute, lastOfMonth, monthRotation, weeksOfMonth,
 } from '../../domain';
 import { useData } from '../../store/useStore';
@@ -11,8 +11,10 @@ import { MonthCalendar } from '../absences/AbsencesScreen';
 import { PdfButtons } from '../../pdf/PdfButtons';
 
 export function MonthScreen() {
-  const data = useData();
+  const current = useData();
   const [ym, setYm] = useState<YearMonth>(currentYearMonth());
+  // Mês passado: rodízios e nomes como estavam no fim daquele mês.
+  const data = useMemo(() => dataForDate(current, lastOfMonth(ym.year, ym.month)), [current, ym]);
   const colors = useMemo(() => colorMap(data.asbs), [data.asbs]);
   const name = (id: string) => data.asbs.find((a) => a.id === id)?.name ?? '?';
   const weeks = weeksOfMonth(ym.year, ym.month);
