@@ -1,5 +1,4 @@
 import { useDraggable } from '@dnd-kit/core';
-import { CSS } from '@dnd-kit/utilities';
 import type { Id, SlotKind, SlotOrigin } from '../../domain';
 
 export type DragItem =
@@ -22,10 +21,9 @@ interface ChipProps {
 /** Ficha de ASB. Arrastável quando recebe `item` e não está desabilitada. */
 export function Chip({ id, label, color, tag, item, external, origin, disabled, onRemove, title }: ChipProps) {
   const draggable = useDraggable({ id, data: item, disabled: disabled || !item });
-  const style = {
-    background: external ? undefined : color,
-    transform: draggable.transform ? CSS.Translate.toString(draggable.transform) : undefined,
-  };
+  // A ficha original fica parada (esmaecida) e quem acompanha o dedo é o DragOverlay.
+  // Mover a original fazia a paleta do celular rolar e ficar em branco durante o arrasto.
+  const style = { background: external ? undefined : color };
   const cls = [
     'chip',
     external ? 'external' : '',

@@ -111,10 +111,15 @@ a { color: var(--accent); }
 
 /* ---- Quadro ---- */
 .board-layout { display: flex; gap: 12px; align-items: flex-start; }
-.board-scroll { flex: 1; overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
-.board { display: grid; min-width: max-content; }
+.board-scroll {
+  flex: 1; min-width: 0; overflow: auto; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  /* Rolagem própria: o cabeçalho das colunas e a coluna de horas ficam sempre à vista,
+     e a barra de rolagem lateral fica dentro da tela. */
+  max-height: calc(100vh - 80px); max-height: calc(100dvh - 80px);
+}
+.board { display: grid; }
 .board .hcell {
-  position: sticky; top: 0; z-index: 2; background: #eef0f3; border-bottom: 1px solid var(--line-strong); border-right: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 3; background: #eef0f3; border-bottom: 1px solid var(--line-strong); border-right: 1px solid var(--line);
   padding: 6px; font-weight: 600; font-size: 12px; text-align: center;
 }
 .board .hcell .sub { font-weight: 400; color: var(--muted); }
@@ -133,6 +138,8 @@ a { color: var(--accent); }
 .cell .chips { display: flex; flex-wrap: wrap; gap: 3px; }
 .cell.valid { background: var(--ok-soft); outline: 1px dashed var(--ok); outline-offset: -2px; }
 .cell.invalid { background: #ececec; opacity: 0.55; }
+.cell.extra-ok { background: #eef3fb; outline: 1px dashed var(--accent); outline-offset: -2px; }
+.cell.over.extra-ok { background: var(--accent-soft); }
 .cell.over.valid { background: #c8e6cb; }
 .cell.valid.no-dentist { background: var(--warn-soft); outline-color: var(--warn); }
 .cell.over.valid.no-dentist { background: #ffe4b8; }
@@ -167,8 +174,9 @@ a { color: var(--accent); }
 .tabs button { border: 0; background: none; padding: 8px 12px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
 .tabs button.active { border-bottom-color: var(--accent); color: var(--accent); font-weight: 600; }
 .suggest { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 10px; }
-.suggest button { text-align: left; white-space: normal; justify-content: flex-start; line-height: 1.3; }
-.suggest button > span { display: block; }
+.suggest button, .suggest button * { white-space: normal; }
+.suggest button { text-align: left; justify-content: flex-start; line-height: 1.3; width: 100%; }
+.suggest button > span { display: block; min-width: 0; flex: 1 1 auto; overflow-wrap: anywhere; }
 .note { padding: 8px 10px; border-radius: 6px; margin: 6px 0 10px; font-size: 13px; }
 .note.warn { background: var(--warn-soft); border-left: 4px solid var(--warn); }
 .note.bad { background: var(--danger-soft); border-left: 4px solid var(--danger); }
@@ -188,7 +196,8 @@ a { color: var(--accent); }
 .modal-backdrop { position: fixed; inset: 0; background: rgba(20, 24, 32, 0.45); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 16px; }
 .modal { background: var(--surface); border-radius: 10px; padding: 18px 20px; max-width: 520px; width: 100%; box-shadow: 0 12px 40px rgba(0,0,0,0.3); max-height: 90vh; overflow: auto; }
 .modal.wide { max-width: 760px; }
-.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+.modal-actions.wrap { justify-content: flex-start; }
 .hour-picks { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 
 /* ---- Mês / calendário ---- */
@@ -197,7 +206,9 @@ a { color: var(--accent); }
 .calendar .day { min-height: 56px; border: 1px solid var(--line); border-radius: 6px; padding: 3px 4px; font-size: 11px; background: var(--surface); }
 .calendar .day.closed { background: #f1f2f4; color: #9aa1ad; }
 .calendar .day.other { opacity: 0.35; }
-.calendar .day .n { font-weight: 600; }
+.calendar .day .n { font-weight: 600; color: inherit; text-decoration: none; }
+.calendar .day a.n:hover { text-decoration: underline; }
+.calendar .day .abs.holiday { background: #6b7280; }
 .calendar .day .abs { display: block; padding: 1px 3px; margin-top: 2px; border-radius: 3px; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* ---- Sortable ---- */
@@ -216,9 +227,9 @@ a { color: var(--accent); }
   .app-header { position: static; padding: 6px 10px; gap: 6px 10px; }
   .app-header .brand { font-size: 15px; }
   .save-indicator { font-size: 11px; }
-  .app-nav { order: 3; width: 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; margin: 0 -10px; padding: 0 10px; }
-  .app-nav::-webkit-scrollbar { display: none; }
-  .app-nav a { padding: 6px 10px; font-size: 13px; }
+  /* Menu em duas linhas: todos os itens à vista, sem nada escondido à direita. */
+  .app-nav { order: 3; width: 100%; flex-wrap: wrap; gap: 4px; }
+  .app-nav a { padding: 6px 8px; font-size: 13px; border: 1px solid var(--line); }
   .app-main { padding: 10px; }
   .toolbar { gap: 6px; }
   .hint-shift { display: none; }
@@ -230,18 +241,21 @@ a { color: var(--accent); }
   .palette { width: 100%; position: sticky; top: 0; z-index: 10; order: -1; }
   .palette .card { padding: 6px 8px; }
   .palette h3, .palette .card > p { display: none; }
+  .palette.removing .card > p { display: block; margin: 0 0 4px; }
+  .palette-item.absent .small { display: block; font-size: 11px; max-width: 150px; }
   .palette-list { flex-direction: row; flex-wrap: nowrap; overflow-x: auto; gap: 6px; margin-top: 0; padding-bottom: 2px; scrollbar-width: thin; }
   .palette-item { flex: 0 0 auto; min-width: 0; padding: 4px 6px; flex-direction: row; align-items: center; gap: 6px; }
-  .palette-item .meta { flex-direction: column; gap: 0; font-size: 10px; line-height: 1.2; }
-  .palette-item .meter, .palette-item .small { display: none; }
+  .palette-item .meta { flex-direction: column; gap: 0; font-size: 11px; line-height: 1.2; }
+  .palette-item .meter, .palette-item:not(.absent) .small { display: none; }
+  .board-scroll { max-height: calc(100vh - 90px); max-height: calc(100dvh - 90px); }
   .board .hcell { font-size: 11px; padding: 4px; }
   .cell { min-height: 46px; padding: 3px; }
-  .cell .dentist { font-size: 10px; }
+  .cell .dentist { font-size: 11px; }
   .alerts { margin-top: 10px; }
 
   .cards { grid-template-columns: 1fr; }
   .calendar .day { min-height: 44px; font-size: 10px; padding: 2px 3px; }
-  .calendar .day .abs { font-size: 9px; }
+  .calendar .day .abs { font-size: 10px; }
   .modal { padding: 14px; }
   /* Listas em cartões no celular: nada escondido à direita. */
   .table.responsive thead { display: none; }
@@ -254,8 +268,27 @@ a { color: var(--accent); }
 /* Toque: fichas e botões maiores para o dedo. */
 @media (pointer: coarse) {
   .chip { padding: 5px 10px; font-size: 13px; touch-action: manipulation; }
-  .chip .x { width: 20px; height: 20px; line-height: 20px; font-size: 13px; }
-  .btn { padding: 8px 12px; }
-  .btn.sm { padding: 5px 9px; }
+  .chip .x { width: 26px; height: 26px; line-height: 26px; font-size: 15px; margin: -4px -6px -4px 0; }
+  .btn { padding: 8px 12px; min-height: 40px; }
+  .btn.sm { padding: 6px 10px; min-height: 36px; font-size: 13px; }
+  .btn.icon { padding: 8px 12px; min-width: 40px; justify-content: center; }
   .sortable-item { padding: 8px; touch-action: manipulation; }
+  /* 16px nos campos: o Safari do iPhone não amplia a página ao tocar. */
+  input, select, textarea { font-size: 16px; }
+  .field input, .field select, .field textarea, .toolbar input, .toolbar select { min-height: 40px; }
+  input[type='checkbox'], input[type='radio'] { width: 20px; height: 20px; }
+  .checks label { min-height: 36px; }
 }
+.backup-bar.bad { background: var(--danger-soft); border-bottom-color: #f3b8b3; }
+.plain-list { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.plain-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; }
+.calendar a.day { display: block; color: inherit; text-decoration: none; cursor: pointer; }
+.calendar a.day:hover { border-color: var(--accent); }
+.note:not(.warn):not(.bad):not(.ok) { background: var(--accent-soft); border-left: 4px solid var(--accent); }
+.table td.actions { white-space: nowrap; }
+@media (max-width: 900px) {
+  .table.responsive td.actions { white-space: normal; display: flex; gap: 6px; flex-wrap: wrap; padding-top: 6px; }
+  .table.responsive td.mono { white-space: nowrap; }
+}
+/* Canto "Hora" fica parado nas duas direções. */
+.board .hcell:first-child { left: 0; z-index: 4; }
