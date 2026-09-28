@@ -25,6 +25,8 @@ export function columnsFor(data: AppData): Column[] {
 
 export function columnKeyOf(slot: Pick<EffectiveSlot, 'kind' | 'roomId'>): string {
   if (slot.kind === 'sala') return `sala:${slot.roomId ?? ''}`;
+  // Apoio de uma sala específica aparece dentro da sala.
+  if (slot.kind === 'apoio' && slot.roomId) return `sala:${slot.roomId}`;
   if (slot.kind === 'recepcao') return 'kind:apoio';
   return `kind:${slot.kind}`;
 }

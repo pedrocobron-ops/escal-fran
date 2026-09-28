@@ -389,7 +389,8 @@ export function analyze(current: AppData, day: EffectiveDay): Alert[] {
       }
     }
     for (const hour of HOURS) {
-      const rooms = mine.filter((s) => s.hour === hour && s.kind === 'sala' && s.roomId).map((s) => s.roomId as Id);
+      // Sala ou apoio de sala: estar em duas salas diferentes no mesmo horário é dividir-se.
+      const rooms = [...new Set(mine.filter((s) => s.hour === hour && s.roomId && (s.kind === 'sala' || s.kind === 'apoio')).map((s) => s.roomId as Id))];
       if (rooms.length > 1) {
         alerts.push({
           level: 'aviso',

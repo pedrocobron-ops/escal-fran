@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { analyze, coverageSuggestions, effectiveDay, extraNeededToCover, allowedHours, resolveTask } from '../src/domain';
-import { setDaySlots, setSlots, clearDayOverrides } from '../src/store/useStore';
+import { setDaySlots, setSlots, clearDayOverrides, removeSlotAt } from '../src/store/useStore';
 import { parseBackup, exportBackup, seedData } from '../src/store/storage';
 import { ID, absence, seed } from './helpers';
 
@@ -197,5 +197,47 @@ describe('horas extras para cobrir uma ausência', () => {
     const alerts = analyze(d, day).map((a) => a.code);
     expect(alerts.filter((c) => c === 'sala-sem-asb')).toHaveLength(1); // só Sala 2 às 18h
     expect(alerts).not.toContain('substituta-choque');
+  });
+});
+
+describe('apoio de uma sala específica', () => {
+  it('não conta como ASB da sala, não gera "duas na mesma sala" e aparece no PDF', async () => {
+    const { dayPdfModel } = await import('../src/pdf/model');
+    const d = seed();
+    // Ana (apoio geral às 10h) vira apoio da Sala 4 às 10h, onde a Pâmela é a ASB
+    setSlots(d, ID.ana, [10], { kind: 'apoio', roomId: 's4' });
+    const day = effectiveDay(d, MON);
+    expect(day.slots.find((s) => s.who.type === 'asb' && s.who.asbId === ID.ana && s.hour === 10)).toMatchObject({ kind: 'apoio', roomId: 's4' });
+    const codes = analyze(d, day).map((a) => a.code);
+    expect(codes).not.toContain('duas-asbs-mesma-sala');
+    expect(codes).not.toContain('bloco-sem-atribuicao');
+    const pdf = dayPdfModel(d, MON);
+    expect(pdf.rows[3].cells[3].asb).toBe('ASB: Pâmela (apoio: Ana)');
+    expect(pdf.rows[3].cells[4].asb).toBe('Priscila'); // coluna Apoio / Recepção sem a Ana
+    expect(pdf.asbRows.find((r) => r.name === 'Ana')!.morning).toContain('Apoio da Sala 4 (10h–11h)');
+  });
+
+  it('apoio de sala sozinho não cobre a sala: continua alerta de sala sem ASB', () => {
+    const d = seed();
+    d.base.slots = d.base.slots.filter((s) => !(s.asbId === ID.pamela && s.hour === 9));
+    setSlots(d, ID.ana, [9], { kind: 'apoio', roomId: 's4' }); // Ana não está no contrato às 09h: ignorado
+    setSlots(d, ID.laura, [9], { kind: 'apoio', roomId: 's4' });
+    const codes = analyze(d, effectiveDay(d, MON)).filter((a) => a.hour === 9).map((a) => a.code);
+    expect(codes).toContain('sala-sem-asb');
+  });
+
+  it('continuar na sala e ser apoio de outra ao mesmo tempo gera aviso de sala dividida', () => {
+    const d = seed();
+    setSlots(d, ID.laura, [9], { kind: 'apoio', roomId: 's4' }, { additive: true });
+    expect(d.base.slots.filter((s) => s.asbId === ID.laura && s.hour === 9).map((s) => `${s.kind}:${s.roomId}`).sort()).toEqual(['apoio:s4', 'sala:s1']);
+    const alerts = analyze(d, effectiveDay(d, MON));
+    expect(alerts.find((a) => a.code === 'asb-duas-salas')?.message).toBe('Laura cobre Sala 1 e Sala 4 ao mesmo tempo às 09h.');
+  });
+
+  it('removeSlotAt tira só o apoio da sala', () => {
+    const d = seed();
+    setSlots(d, ID.laura, [9], { kind: 'apoio', roomId: 's4' }, { additive: true });
+    removeSlotAt(d, ID.laura, 9, 'apoio', 's4');
+    expect(d.base.slots.filter((s) => s.asbId === ID.laura && s.hour === 9).map((s) => s.kind)).toEqual(['sala']);
   });
 });

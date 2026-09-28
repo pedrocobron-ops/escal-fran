@@ -228,13 +228,14 @@ export function setSlots(draft: AppData, asbId: Id, hours: number[], target: Cel
   draft.base.slots = draft.base.slots.filter((s) => {
     if (s.asbId !== asbId || !set.has(s.hour)) return true;
     if (!opts.additive) return false;
-    // aditivo: some o que é igual ao destino, o almoço e o apoio; salas diferentes ficam
+    // aditivo: some o que é igual ao destino, o almoço e o apoio geral; outras salas ficam
     if (s.kind === target.kind && s.roomId === target.roomId) return false;
-    return s.kind === 'sala' && target.kind === 'sala';
+    const targetIsRoom = target.kind === 'sala' || (target.kind === 'apoio' && !!target.roomId);
+    return targetIsRoom && s.kind === 'sala';
   });
   for (const hour of valid) {
     const slot: Slot = { asbId, hour, kind: target.kind };
-    if (target.kind === 'sala') slot.roomId = target.roomId;
+    if (target.roomId && (target.kind === 'sala' || target.kind === 'apoio')) slot.roomId = target.roomId;
     draft.base.slots.push(slot);
   }
   draft.base.slots.sort((a, b) => a.hour - b.hour || a.asbId.localeCompare(b.asbId));
@@ -254,7 +255,7 @@ export function setDaySlots(draft: AppData, date: IsoDate, asbId: Id, hours: num
     }
     for (const e of entries) {
       const o: DaySlot = { id: newId('dia'), date, asbId, hour, kind: e.kind as DaySlotKind };
-      if (e.kind === 'sala') o.roomId = e.roomId;
+      if (e.roomId && (e.kind === 'sala' || e.kind === 'apoio')) o.roomId = e.roomId;
       draft.dayOverrides.push(o);
     }
   }
@@ -274,7 +275,7 @@ export function removeSlot(draft: AppData, asbId: Id, hour: number): void {
 
 /** Remove só um slot específico (a ASB pode ter mais de um na mesma hora). */
 export function removeSlotAt(draft: AppData, asbId: Id, hour: number, kind: SlotKind, roomId?: Id): void {
-  draft.base.slots = draft.base.slots.filter((s) => !(s.asbId === asbId && s.hour === hour && s.kind === kind && (kind !== 'sala' || s.roomId === roomId)));
+  draft.base.slots = draft.base.slots.filter((s) => !(s.asbId === asbId && s.hour === hour && s.kind === kind && (s.roomId ?? '') === (roomId ?? '')));
 }
 
 export function clearSchedule(draft: AppData): void {
@@ -322,8 +323,8 @@ export function removeDentist(draft: AppData, dentistId: Id, today?: IsoDate): v
 
 export function removeRoom(draft: AppData, roomId: Id, today?: IsoDate): void {
   draft.rooms = draft.rooms.filter((r) => r.id !== roomId);
-  draft.base.slots = draft.base.slots.filter((s) => !(s.kind === 'sala' && s.roomId === roomId));
-  draft.dayOverrides = (draft.dayOverrides ?? []).filter((o) => !(o.kind === 'sala' && o.roomId === roomId) || (today !== undefined && o.date < today));
+  draft.base.slots = draft.base.slots.filter((s) => s.roomId !== roomId);
+  draft.dayOverrides = (draft.dayOverrides ?? []).filter((o) => o.roomId !== roomId || (today !== undefined && o.date < today));
   for (const d of draft.dentists.filter((x) => x.roomId === roomId)) removeDentist(draft, d.id, today);
   draft.tasks = draft.tasks.filter((t) => !(t.assignment.mode === 'room' && t.assignment.roomId === roomId));
 }

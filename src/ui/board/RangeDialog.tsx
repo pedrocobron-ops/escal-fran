@@ -39,28 +39,30 @@ export function RangeDialog({ asb, column, fromHour, allowed, onPick, onClose }:
   );
 }
 
-interface ConflictProps {
-  asbName: string;
-  hourLabel: string;
-  currentRooms: string[];
-  targetRoom: string;
-  onMove: () => void;
-  onBoth: () => void;
-  onClose: () => void;
+export interface Choice {
+  label: string;
+  hint?: string;
+  primary?: boolean;
+  onChoose: () => void;
 }
 
-/** A ASB já está em outra sala nesse bloco: mover ou cobrir as duas? */
-export function ConflictDialog({ asbName, hourLabel, currentRooms, targetRoom, onMove, onBoth, onClose }: ConflictProps) {
+/** Pergunta com várias saídas (ASB já em outra sala, sala já ocupada). */
+export function ChoiceDialog({ title, message, choices, onClose }: { title: string; message: string; choices: Choice[]; onClose: () => void }) {
   return (
-    <Modal title={`${asbName} já está em outra sala`} onClose={onClose}>
-      <p>
-        Às {hourLabel}, <strong>{asbName}</strong> está na {currentRooms.join(' e ')}. O que fazer com a {targetRoom}?
-      </p>
-      <p className="muted small">Cobrir as duas deixa a ficha nas duas salas e gera um aviso, para você saber que ela está dividida.</p>
+    <Modal title={title} onClose={onClose}>
+      <p>{message}</p>
+      <div className="suggest">
+        {choices.map((c, i) => (
+          <button key={i} type="button" className={`btn${c.primary ? ' primary' : ''}`} onClick={c.onChoose} autoFocus={c.primary}>
+            <span>
+              <strong>{c.label}</strong>
+              {c.hint ? <span className="small" style={{ display: 'block', opacity: 0.85 }}>{c.hint}</span> : null}
+            </span>
+          </button>
+        ))}
+      </div>
       <div className="modal-actions">
         <button className="btn" onClick={onClose}>Cancelar</button>
-        <button className="btn" onClick={onBoth}>Cobrir as duas</button>
-        <button className="btn primary" onClick={onMove} autoFocus>Mover para a {targetRoom}</button>
       </div>
     </Modal>
   );

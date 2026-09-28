@@ -58,3 +58,12 @@ export function extraShiftsOn(data: Pick<AppData, 'extraShifts'>, date: IsoDate)
 export function extraShiftsBetween(data: Pick<AppData, 'extraShifts'>, from: IsoDate, to: IsoDate): ExtraShift[] {
   return (data.extraShifts ?? []).filter((e) => e.date >= from && e.date <= to);
 }
+
+/** Horas de uma hora extra que ficam fora do contrato (as que contam para pagamento). */
+export function paidExtraHours(e: ExtraShift, contract: { start: number; end: number } | undefined): number {
+  let n = 0;
+  for (let h = e.start; h < e.end; h++) {
+    if (!contract || h < contract.start || h >= contract.end) n++;
+  }
+  return n;
+}

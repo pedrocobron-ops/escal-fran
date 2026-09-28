@@ -26,7 +26,7 @@ import { colorMap, tint } from '../colors';
 import { useConfirm } from '../common/Modal';
 import { AlertsPanel } from './AlertsPanel';
 import { Chip, ChipOverlay, type DragItem } from './Chip';
-import { ConflictDialog, RangeDialog } from './RangeDialog';
+import { ChoiceDialog, RangeDialog, type Choice } from './RangeDialog';
 import { cellKey, columnKeyOf, columnsFor, type Column } from './model';
 
 type Mode = 'base' | 'day';
@@ -50,12 +50,10 @@ interface PendingRange {
   orig?: DragItem & { type: 'slot' };
 }
 
-interface PendingConflict {
-  asbId: string;
-  column: Column;
-  hour: number;
-  currentRooms: string[];
-  orig?: DragItem & { type: 'slot' };
+interface PendingChoice {
+  title: string;
+  message: string;
+  choices: Choice[];
 }
 
 const collision: CollisionDetection = (args) => {
@@ -76,7 +74,7 @@ export function Board() {
   const [rangeMode, setRangeMode] = useState(false);
   const [active, setActive] = useState<DragItem | null>(null);
   const [pending, setPending] = useState<PendingRange | null>(null);
-  const [conflict, setConflict] = useState<PendingConflict | null>(null);
+  const [choice, setChoice] = useState<PendingChoice | null>(null);
   const shiftRef = useRef(false);
 
   useEffect(() => {
@@ -143,16 +141,16 @@ export function Board() {
     (asbId: string, hour: number): CellTarget[] =>
       day.slots
         .filter((s) => s.hour === hour && s.who.type === 'asb' && s.who.asbId === asbId)
-        .map((s) => (s.kind === 'sala' ? { kind: 'sala', roomId: s.roomId } : { kind: s.kind })),
+        .map((s) => ({ kind: s.kind, roomId: s.roomId })),
     [day.slots],
   );
 
-  const sameTarget = (a: CellTarget, b: CellTarget) => a.kind === b.kind && (a.kind !== 'sala' || a.roomId === b.roomId);
+  const sameTarget = (a: CellTarget, b: CellTarget) => a.kind === b.kind && (a.roomId ?? '') === (b.roomId ?? '');
 
   /** Aplica a colocação. `additive` mantém as outras salas da hora (cobrir duas salas). */
   const place = useCallback(
-    (asbId: string, hours: number[], column: Column, additive: boolean, orig?: DragItem & { type: 'slot' }) => {
-      const target = targetOf(column);
+    (asbId: string, hours: number[], column: Column, additive: boolean, orig?: DragItem & { type: 'slot' }, asApoio = false) => {
+      const target: CellTarget = asApoio && column.roomId ? { kind: 'apoio', roomId: column.roomId } : targetOf(column);
       if (!isDay) {
         apply((d) => {
           if (orig && !hours.includes(orig.hour)) removeSlotAt(d, asbId, orig.hour, orig.kind, orig.roomId);
@@ -162,12 +160,13 @@ export function Board() {
       }
       apply((d) => {
         if (orig && !hours.includes(orig.hour)) {
-          const origTarget: CellTarget = orig.kind === 'sala' ? { kind: 'sala', roomId: orig.roomId } : { kind: orig.kind };
+          const origTarget: CellTarget = { kind: orig.kind, roomId: orig.roomId };
           setDaySlots(d, date, asbId, [orig.hour], entriesAt(asbId, orig.hour).filter((e) => !sameTarget(e, origTarget)));
         }
         for (const hour of hours) {
           const current = entriesAt(asbId, hour).filter((e) => !sameTarget(e, target));
-          const kept = additive ? current.filter((e) => e.kind === 'sala' && target.kind === 'sala') : [];
+          const targetIsRoom = target.kind === 'sala' || (target.kind === 'apoio' && !!target.roomId);
+          const kept = additive && targetIsRoom ? current.filter((e) => e.kind === 'sala') : [];
           setDaySlots(d, date, asbId, [hour], [...kept, target]);
         }
       });
@@ -181,7 +180,7 @@ export function Board() {
         apply((d) => removeSlotAt(d, asbId, hour, kind, roomId));
         return;
       }
-      const t: CellTarget = kind === 'sala' ? { kind: 'sala', roomId } : { kind };
+      const t: CellTarget = { kind, roomId };
       apply((d) => setDaySlots(d, date, asbId, [hour], entriesAt(asbId, hour).filter((e) => !sameTarget(e, t))));
     },
     [apply, isDay, date, entriesAt],
@@ -212,11 +211,43 @@ export function Board() {
     }
     const target = targetOf(over.column);
     const movingSameHour = orig !== undefined && orig.hour === over.hour;
+    const roomName = (id?: string) => data.rooms.find((r) => r.id === id)?.name ?? '';
     const otherRooms = target.kind === 'sala' && !movingSameHour
-      ? entriesAt(asb.id, over.hour).filter((x) => x.kind === 'sala' && x.roomId !== target.roomId).map((x) => data.rooms.find((r) => r.id === x.roomId)?.name ?? '')
+      ? entriesAt(asb.id, over.hour).filter((x) => x.kind === 'sala' && x.roomId !== target.roomId).map((x) => roomName(x.roomId))
       : [];
+    // Outra ASB já é a ASB da sala nesse horário?
+    const occupants = target.kind === 'sala'
+      ? day.slots
+          .filter((s) => s.kind === 'sala' && s.roomId === target.roomId && s.hour === over.hour && !(s.who.type === 'asb' && s.who.asbId === asb.id))
+          .map((s) => (s.who.type === 'asb' ? asbById.get(s.who.asbId)?.name ?? '' : `${s.who.name} (externa)`))
+      : [];
+    const room = over.column.label;
+    const hourLabel = formatHour(over.hour);
+    const go = (additive: boolean, asApoio: boolean) => () => { place(asb.id, [over.hour], over.column, additive, orig, asApoio); setChoice(null); };
+    if (occupants.length > 0) {
+      const choices: Choice[] = [
+        { label: `Apoio da ${room}`, hint: `${asb.name} ajuda na ${room}; ${occupants.join(' e ')} continua como ASB da sala.`, primary: true, onChoose: go(false, true) },
+      ];
+      if (otherRooms.length > 0) {
+        choices.push({ label: `Apoio da ${room} e continuar na ${otherRooms.join(' e ')}`, hint: 'Fica nas duas; gera aviso de sala dividida.', onChoose: go(true, true) });
+      }
+      choices.push({
+        label: `Também como ASB da ${room}`,
+        hint: `${otherRooms.length > 0 ? `Sai da ${otherRooms.join(' e ')}. ` : ''}Duas ASBs na mesma sala; gera aviso.`,
+        onChoose: go(false, false),
+      });
+      setChoice({ title: `${room} já tem ASB às ${hourLabel}`, message: `${occupants.join(' e ')} já está na ${room} nesse horário. Como colocar ${asb.name}?`, choices });
+      return;
+    }
     if (otherRooms.length > 0) {
-      setConflict({ asbId: asb.id, column: over.column, hour: over.hour, currentRooms: otherRooms, orig });
+      setChoice({
+        title: `${asb.name} já está em outra sala`,
+        message: `Às ${hourLabel}, ${asb.name} está na ${otherRooms.join(' e ')}. O que fazer com a ${room}?`,
+        choices: [
+          { label: `Mover para a ${room}`, hint: `Sai da ${otherRooms.join(' e ')}.`, primary: true, onChoose: go(false, false) },
+          { label: 'Cobrir as duas salas', hint: 'A ficha fica nas duas salas e gera um aviso, para você saber que ela está dividida.', onChoose: go(true, false) },
+        ],
+      });
       return;
     }
     place(asb.id, [over.hour], over.column, false, orig);
@@ -346,17 +377,7 @@ export function Board() {
           onClose={() => setPending(null)}
         />
       )}
-      {conflict && (
-        <ConflictDialog
-          asbName={asbById.get(conflict.asbId)?.name ?? ''}
-          hourLabel={formatHour(conflict.hour)}
-          currentRooms={conflict.currentRooms}
-          targetRoom={conflict.column.label}
-          onMove={() => { place(conflict.asbId, [conflict.hour], conflict.column, false, conflict.orig); setConflict(null); }}
-          onBoth={() => { place(conflict.asbId, [conflict.hour], conflict.column, true, conflict.orig); setConflict(null); }}
-          onClose={() => setConflict(null)}
-        />
-      )}
+      {choice && <ChoiceDialog title={choice.title} message={choice.message} choices={choice.choices} onClose={() => setChoice(null)} />}
     </div>
   );
 }
@@ -419,6 +440,7 @@ interface CellProps {
 function slotTag(s: EffectiveSlot, asbById: Map<string, Asb>): string | undefined {
   const parts: string[] = [];
   if (s.coveringFor) parts.push(`cobre ${asbById.get(s.coveringFor)?.name ?? '?'}`);
+  if (s.kind === 'apoio' && s.roomId) parts.push('apoio');
   if (s.origin === 'auto') parts.push('remanejada');
   if (s.origin === 'override') parts.push('ajuste');
   if (s.extra) parts.push('extra');

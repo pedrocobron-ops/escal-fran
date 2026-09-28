@@ -181,6 +181,11 @@ export function MonthPdf({ m }: { m: MonthPdfModel }) {
                 </View>
               ))}
             </View>
+            {m.extraTotals.length > 0 && (
+              <Text style={[s.bold, { marginTop: 4 }]}>
+                Total no mês (horas fora do contrato): {m.extraTotals.map((t) => `${t.asb} ${t.hours}h`).join(', ')}.
+              </Text>
+            )}
           </View>
         )}
 

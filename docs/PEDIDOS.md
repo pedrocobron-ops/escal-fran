@@ -19,4 +19,7 @@ Francisco (responsável técnico do CEO, quem usa o sistema) mandou áudios e me
 - **Remanejamento automático** também usa quem tem hora extra sem atribuição naquele horário.
 - **Modo Dia editável** (`dayOverrides`): arrastar no Modo Dia muda só aquela data (fichas tracejadas, botão "Limpar ajustes do dia"). A escala base não muda.
 - **Duas salas ao mesmo tempo**: ao soltar uma ASB numa sala quando ela já está em outra no mesmo horário, o app pergunta "Mover" ou "Cobrir as duas". Cobrir as duas gera um aviso (não crítico).
+- **Apoio de uma sala**: ao soltar uma ASB numa sala que já tem ASB, o app pergunta se ela fica "de apoio" daquela sala (etiqueta "apoio" na célula, não conta como ASB da sala e não gera aviso) ou se entra também como ASB da sala. Dá para ser apoio de uma sala e continuar na outra (gera aviso de sala dividida).
+- **Total de horas extras do mês** por ASB, contando só as horas fora do contrato (para pagamento), na Visão do mês e no PDF do mês.
+- **Histórico**: dias passados mostram a escala como estava naquele dia, mesmo depois de mudar salas, dentistas, ASBs, escala base ou tarefas. Remover alguém da equipe preserva o que já passou.
 - PDF do mês ganhou "Folgas de dentista do mês" e "Horas extras do mês". PDF do dia lista folgas e horas extras e marca "(remanejada)" e "(extra)".

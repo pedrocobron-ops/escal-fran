@@ -41,7 +41,11 @@ export interface Asb {
 
 export type SlotKind = 'sala' | 'apoio' | 'recepcao' | 'cme' | 'almox' | 'almoco';
 
-/** O que uma ASB está fazendo num bloco de 1 hora. */
+/**
+ * O que uma ASB está fazendo num bloco de 1 hora. `roomId` vale para `sala` e
+ * para `apoio` de uma sala específica (ASB de apoio dentro daquela sala, que não
+ * conta como a ASB da sala).
+ */
 export interface Slot {
   asbId: Id;
   hour: number;

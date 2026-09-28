@@ -111,3 +111,18 @@ describe('PDF com folga de dentista e hora extra', () => {
     expect(day.alerts.some((a) => a.startsWith('Info: Andrea remanejada da Sala 3 para a Sala 1'))).toBe(true);
   });
 });
+
+describe('total de horas extras do mês', () => {
+  it('soma só as horas fora do contrato, por ASB', async () => {
+    const { extraTotalsByAsb } = await import('../src/pdf/model');
+    const d = seed();
+    d.extraShifts = [
+      { id: 'a', asbId: ID.nicelia, date: '2026-09-14', start: 10, end: 13 }, // 3h fora (contrato 13–19)
+      { id: 'b', asbId: ID.nicelia, date: '2026-09-15', start: 11, end: 14 }, // 2h fora, 13h já é contrato
+      { id: 'c', asbId: ID.amanda, date: '2026-09-15', start: 18, end: 19 },  // 1h
+      { id: 'd', asbId: ID.amanda, date: '2026-10-01', start: 18, end: 19 },  // outro mês
+    ];
+    expect(extraTotalsByAsb(d, '2026-09-01', '2026-09-30')).toEqual([{ asb: 'Nicélia', hours: 5 }, { asb: 'Amanda', hours: 1 }]);
+    expect(monthPdfModel(d, 2026, 9).extraTotals).toEqual([{ asb: 'Nicélia', hours: 5 }, { asb: 'Amanda', hours: 1 }]);
+  });
+});

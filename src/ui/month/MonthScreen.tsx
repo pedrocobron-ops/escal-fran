@@ -9,6 +9,7 @@ import { colorMap } from '../colors';
 import { MonthPicker, currentYearMonth, type YearMonth } from '../common/MonthPicker';
 import { MonthCalendar } from '../absences/AbsencesScreen';
 import { PdfButtons } from '../../pdf/PdfButtons';
+import { extraTotalsByAsb } from '../../pdf/model';
 
 export function MonthScreen() {
   const current = useData();
@@ -148,6 +149,12 @@ export function MonthScreen() {
 
       <section className="card">
         <h2>Horas extras</h2>
+        {extras.length > 0 && (
+          <p>
+            <strong>Total no mês</strong> (horas fora do contrato, para pagamento):{' '}
+            {extraTotalsByAsb(current, first, last).map((t) => `${t.asb} ${t.hours}h`).join(', ') || 'nenhuma'}.
+          </p>
+        )}
         {extras.length === 0 ? (
           <p className="muted">Nenhuma hora extra neste mês.</p>
         ) : (
