@@ -6,6 +6,8 @@ export interface Env {
   ANTHROPIC_API_KEY?: string;
   SUPABASE_URL?: string;
   SUPABASE_ANON_KEY?: string;
+  /** Chaves "publishable" novas, em JSON (o painel do Supabase define). */
+  SUPABASE_PUBLISHABLE_KEYS?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
   /** Modelo da Anthropic. Padrão: Haiku 4.5 (rápido e barato). */
   CLEO_MODEL?: string;
@@ -34,6 +36,48 @@ interface Autoriza {
   restantes?: number;
 }
 
+/** Chaves públicas do projeto que o app pode mandar: a anon antiga e as "publishable" novas. */
+export function allowedKeys(env: Env): Set<string> {
+  const keys = new Set<string>();
+  if (env.SUPABASE_ANON_KEY) keys.add(env.SUPABASE_ANON_KEY);
+  if (env.SUPABASE_PUBLISHABLE_KEYS) {
+    try {
+      const parsed = JSON.parse(env.SUPABASE_PUBLISHABLE_KEYS) as unknown;
+      const values = Array.isArray(parsed) ? parsed : typeof parsed === 'object' && parsed !== null ? Object.values(parsed) : [];
+      for (const v of values) {
+        if (typeof v === 'string') keys.add(v);
+        else if (typeof v === 'object' && v !== null) for (const x of Object.values(v)) if (typeof x === 'string' && x.length > 20) keys.add(x);
+      }
+    } catch {
+      // formato desconhecido: fica só a anon
+    }
+  }
+  return keys;
+}
+
+/**
+ * A chave anon antiga é um JWT com o ref do projeto e role "anon". O ambiente da função
+ * nem sempre traz essa chave em SUPABASE_ANON_KEY (projetos novos trazem a "publishable"),
+ * então aceitamos também pelo conteúdo. É uma chave pública: o segredo de verdade é o código.
+ */
+export function isProjectAnonJwt(key: string, env: Env): boolean {
+  const ref = (env.SUPABASE_URL ?? '').match(/^https?:\/\/([a-z0-9]+)\.supabase\.(co|in)/)?.[1];
+  if (!ref) return false;
+  const parts = key.split('.');
+  if (parts.length !== 3) return false;
+  try {
+    const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/'))) as { ref?: unknown; role?: unknown };
+    return payload.ref === ref && payload.role === 'anon';
+  } catch {
+    return false;
+  }
+}
+
+async function fingerprint(s: string): Promise<string> {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+  return [...new Uint8Array(buf).slice(0, 4)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 /** Confere o código e conta a chamada do dia (função SQL public.cleo_autoriza, só com service role). */
 async function autoriza(env: Env, codigo: string, fetchFn: typeof fetch): Promise<Autoriza> {
   const res = await fetchFn(`${env.SUPABASE_URL}/rest/v1/rpc/cleo_autoriza`, {
@@ -53,7 +97,12 @@ export async function handle(req: Request, env: Env, fetchFn: typeof fetch = fet
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
   if (req.method !== 'POST') return json(405, { erro: 'método' });
   const apikey = req.headers.get('apikey') ?? (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '');
-  if (!env.SUPABASE_ANON_KEY || apikey !== env.SUPABASE_ANON_KEY) return json(401, { erro: 'chave do app' });
+  const allowed = allowedKeys(env);
+  if (!apikey || !(allowed.has(apikey) || isProjectAnonJwt(apikey, env))) {
+    // Só impressões digitais nos logs, nunca as chaves.
+    console.warn(`chave do app não bate: recebida=${await fingerprint(apikey)} aceitas=${(await Promise.all([...allowed].map(fingerprint))).join(',')}`);
+    return json(401, { erro: 'chave do app' });
+  }
   if (!env.ANTHROPIC_API_KEY) return json(503, { erro: 'sem chave da API' });
 
   let body: { codigo?: unknown; system?: unknown; messages?: unknown; tools?: unknown };

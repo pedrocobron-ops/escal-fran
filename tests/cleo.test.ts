@@ -8,7 +8,7 @@ import { TOOLS, describeDay, runTool, type ToolContext } from '../src/ai/tools';
 import { runTurn, trimHistory } from '../src/ai/agent';
 import { systemPrompt } from '../src/ai/context';
 import { CleoError, callCleo, type ChatMessage, type CleoResponse } from '../src/ai/client';
-import { DEFAULT_MODEL, handle } from '../supabase/functions/cleo/handler';
+import { DEFAULT_MODEL, allowedKeys, handle, isProjectAnonJwt } from '../supabase/functions/cleo/handler';
 import { seedData } from '../src/store/storage';
 import { ID } from './helpers';
 
@@ -298,6 +298,24 @@ describe('Cléo: cliente e função da nuvem', () => {
     }) as unknown as typeof fetch;
     return { calls, fetchFn };
   }
+
+  it('aceita a chave anon antiga pelo conteúdo e as chaves publishable do ambiente', async () => {
+    const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url');
+    const jwt = (payload: unknown) => `${b64({ alg: 'HS256', typ: 'JWT' })}.${b64(payload)}.assinatura`;
+    const anon = jwt({ iss: 'supabase', ref: 'x', role: 'anon' });
+    expect(isProjectAnonJwt(anon, env)).toBe(true);
+    expect(isProjectAnonJwt(jwt({ ref: 'outro', role: 'anon' }), env)).toBe(false);
+    expect(isProjectAnonJwt(jwt({ ref: 'x', role: 'service_role' }), env)).toBe(false);
+    expect(isProjectAnonJwt('sb_publishable_abc', env)).toBe(false);
+    expect(isProjectAnonJwt(anon, { ...env, SUPABASE_URL: undefined })).toBe(false);
+    // ambiente com SUPABASE_ANON_KEY diferente (publishable) e lista de publishable em JSON
+    const env2 = { ...env, SUPABASE_ANON_KEY: 'sb_publishable_111', SUPABASE_PUBLISHABLE_KEYS: JSON.stringify({ default: 'sb_publishable_222222222222222' }) };
+    expect([...allowedKeys(env2)]).toEqual(['sb_publishable_111', 'sb_publishable_222222222222222']);
+    const c = cloud();
+    expect((await handle(post(good, anon), env2, c.fetchFn)).status).toBe(200);
+    expect((await handle(post(good, 'sb_publishable_222222222222222'), env2, c.fetchFn)).status).toBe(200);
+    expect((await handle(post(good, 'qualquer'), env2, c.fetchFn)).status).toBe(401);
+  });
 
   it('OPTIONS responde CORS; chave do app errada é 401; sem chave da API é 503', async () => {
     const opt = await handle(new Request('https://x/', { method: 'OPTIONS' }), env);
