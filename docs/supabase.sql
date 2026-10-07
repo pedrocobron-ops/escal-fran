@@ -65,3 +65,41 @@ revoke all on function public.escala_put(text, jsonb, timestamptz) from public;
 grant execute on function public.escala_get(text) to anon;
 grant execute on function public.escala_version(text) to anon;
 grant execute on function public.escala_put(text, jsonb, timestamptz) to anon;
+
+-- ---------------------------------------------------------------------------
+-- Cléo (assistente): contagem de chamadas por código e por dia.
+-- A função roda só com a service role (dentro da Edge Function "cleo").
+-- ---------------------------------------------------------------------------
+create table if not exists escala_ceo.cleo_uso (
+  codigo text not null,
+  dia date not null,
+  chamadas integer not null default 0,
+  primary key (codigo, dia)
+);
+alter table escala_ceo.cleo_uso enable row level security;
+
+create or replace function public.cleo_autoriza(p_codigo text, p_limite integer default 300)
+returns jsonb
+language plpgsql
+security definer
+set search_path = escala_ceo, public
+as $$
+declare
+  v_n integer;
+begin
+  if not exists (select 1 from escala_ceo.escalas where codigo = p_codigo) then
+    return jsonb_build_object('ok', false, 'motivo', 'codigo');
+  end if;
+  insert into escala_ceo.cleo_uso (codigo, dia, chamadas)
+  values (p_codigo, current_date, 1)
+  on conflict (codigo, dia) do update set chamadas = escala_ceo.cleo_uso.chamadas + 1
+  returning chamadas into v_n;
+  if v_n > p_limite then
+    return jsonb_build_object('ok', false, 'motivo', 'limite', 'restantes', 0);
+  end if;
+  return jsonb_build_object('ok', true, 'restantes', p_limite - v_n);
+end;
+$$;
+
+revoke all on function public.cleo_autoriza(text, integer) from public, anon, authenticated;
+grant execute on function public.cleo_autoriza(text, integer) to service_role;

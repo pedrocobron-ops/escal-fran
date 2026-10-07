@@ -7,6 +7,7 @@ import { ConfirmProvider } from './ui/common/Modal';
 import { ErrorBoundary } from './ui/common/ErrorBoundary';
 import { RecoveryScreen } from './ui/common/RecoveryScreen';
 import { UndoRedo } from './ui/common/UndoRedo';
+import { CleoPanel } from './ui/cleo/CleoPanel';
 import { diffDays, todayIso } from './domain';
 import { ROUTES, href, useHashRoute, type Route } from './ui/router';
 import { Board } from './ui/board/Board';
@@ -85,6 +86,7 @@ export function App() {
       <ErrorBoundary>
         {recovering ? <RecoveryScreen /> : <main className="app-main">{loaded ? SCREENS[route]() : <p className="muted">Carregando...</p>}</main>}
       </ErrorBoundary>
+      {loaded && !recovering && <CleoPanel />}
     </ConfirmProvider>
   );
 }

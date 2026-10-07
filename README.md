@@ -37,3 +37,21 @@ A escala pode ficar guardada na nuvem, no projeto Supabase "clientes-basicos" (p
 - No app, em Ajustes, "Sincronizar entre aparelhos": no primeiro aparelho, "Criar código novo e enviar esta escala" e anote o código; nos outros, "Entrar com o código".
 
 Sem internet o app continua funcionando com a cópia local e envia as mudanças quando a conexão volta. Se dois aparelhos mudarem a escala ao mesmo tempo, vale a última gravação, e o outro aparelho recebe a versão nova com um aviso. No plano gratuito o Supabase pausa projetos sem uso por 7 dias; aí basta reativar no painel.
+
+## Cléo, a assistente (opcional)
+
+O botão "Cléo", no canto da tela, abre uma conversa: dá para perguntar como está a escala ("quem está na Sala 2 amanhã?") e pedir mudanças em palavras ("a Laura vai faltar sexta", "põe a Amanda na Sala 3 das 15h às 17h", "a Andrea troca para 07h às 13h na quinta"). No Chrome e no Safari dá para falar pelo microfone e ouvir a resposta.
+
+Como funciona:
+
+- O app monta a conversa e manda para a função `cleo` do projeto Supabase (`supabase/functions/cleo/`), junto com o código da escala. A função confere o código e o limite diário (`public.cleo_autoriza`, tabela `escala_ceo.cleo_uso`, em `docs/supabase.sql`) e repassa à API da Anthropic com a chave guardada nos segredos do projeto. O navegador nunca vê a chave.
+- As mudanças acontecem no próprio navegador, pelas mesmas funções das telas (`src/ai/tools.ts`): tudo pode ser desfeito pelo botão Desfazer. Remover algo ou limpar ajustes só acontece depois que a pessoa confirma na conversa.
+- Precisa de internet e de a escala estar na nuvem (Ajustes, Sincronizar entre aparelhos).
+
+Para ativar (uma vez), no painel do Supabase, projeto "clientes-basicos", Edge Functions, Secrets:
+
+- `ANTHROPIC_API_KEY`: chave criada em console.anthropic.com (API Keys), com crédito na conta.
+- `CLEO_MODEL` (opcional): modelo; padrão `claude-haiku-4-5-20251001`.
+- `CLEO_LIMITE_DIA` (opcional): chamadas por dia por código; padrão 300.
+
+Para publicar a função de novo depois de mudar o código: `supabase functions deploy cleo --no-verify-jwt` (ou pelo MCP do Supabase).

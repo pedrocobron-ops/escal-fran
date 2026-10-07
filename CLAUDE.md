@@ -43,10 +43,12 @@ src/
     schedule.ts     # effectiveDay, analyze
     tasks.ts        # taskHolder, rodízios, responsável fixo por período
   store/            # zustand + storage.ts (localStorage) + sync.ts (nuvem opcional)
+  ai/               # Cléo: ferramentas (tools.ts), prompt (context.ts), cliente e laço da conversa
   pdf/              # documentos @react-pdf/renderer
   ui/
     board/          # quadro drag and drop
-    tasks/ absences/ team/ month/ settings/
+    tasks/ absences/ team/ month/ settings/ cleo/
 tests/              # vitest para domain/
+supabase/functions/cleo/  # Edge Function que repassa à API da Anthropic (handler.ts puro, testado)
 .github/workflows/deploy.yml
 ```
