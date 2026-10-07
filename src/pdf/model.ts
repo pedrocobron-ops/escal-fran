@@ -148,10 +148,18 @@ export function describeTaskHolder(current: AppData, task: Task, from: IsoDate, 
   const fixed = (task.holdersByPeriod ?? [])
     .filter((h) => h.from <= to && h.to >= from)
     .sort((a, b) => a.from.localeCompare(b.from))
-    .map((h) => {
-      const name = findAsbAnywhere(current, h.asbId)?.name ?? '?';
+    .flatMap((h) => {
+      const asb = findAsbAnywhere(current, h.asbId);
+      // Quem saiu da equipe ou está inativa não faz mais a tarefa: vale a regra normal.
+      if (!asb || current.asbs.find((a) => a.id === h.asbId)?.active === false) return [];
+      const start = h.from < from ? from : h.from;
+      const end = h.to > to ? to : h.to;
       const whole = h.from <= from && h.to >= to;
-      return whole ? `${name} (o mês inteiro)` : `${name} (${formatDayMonth(h.from < from ? from : h.from)} a ${formatDayMonth(h.to > to ? to : h.to)})`;
+      const away = absencesBetween(current, start, end)
+        .filter((a) => a.asbId === h.asbId)
+        .map((a) => (a.from === a.to ? formatDayMonth(a.from) : `${formatDayMonth(a.from < start ? start : a.from)} a ${formatDayMonth(a.to > end ? end : a.to)}`));
+      const absent = away.length > 0 ? `; ausente ${away.join(', ')}` : '';
+      return [whole ? `${asb.name} (o mês inteiro${absent})` : `${asb.name} (${formatDayMonth(start)} a ${formatDayMonth(end)}${absent})`];
     });
   const a = task.assignment;
   let rule = '';

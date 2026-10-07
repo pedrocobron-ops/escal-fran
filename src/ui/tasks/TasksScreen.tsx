@@ -3,7 +3,7 @@ import { DndContext, KeyboardSensor, MouseSensor, TouchSensor, closestCenter, us
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { Asb, Person, Task, TaskMode, TaskResolution } from '../../domain';
-import { WEEKDAY_LABEL, WEEKDAY_SHORT, dataForDate, findAsbAnywhere, firstOfMonth, formatDate, formatHour, isValidIso, lastOfMonth, resolveTask, rotationTitular, todayIso, weekdayOf } from '../../domain';
+import { WEEKDAY_LABEL, WEEKDAY_SHORT, dataForDate, findAsbAnywhere, firstOfMonth, formatDate, formatHour, isValidIso, lastOfMonth, periodHolderOn, resolveTask, rotationTitular, todayIso, weekdayOf } from '../../domain';
 import { newId, useData, useStore } from '../../store/useStore';
 import { colorMap } from '../colors';
 import { Modal, useConfirm } from '../common/Modal';
@@ -124,7 +124,8 @@ function RotationEditor({ task, assignment, date, colors, onChange }: { task: Ta
   const data = useData();
   // Numa data passada vale a ordem de então (se o rodízio foi reordenado depois).
   const then = dataForDate(data, date).tasks.find((t) => t.id === task.id)?.assignment;
-  const titular = rotationTitular(then && then.mode === 'rotation' ? then : assignment, date);
+  const fixed = periodHolderOn(task, date);
+  const titular = fixed?.asbId ?? rotationTitular(then && then.mode === 'rotation' ? then : assignment, date);
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 4 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 300, tolerance: 8 } }),
@@ -196,7 +197,8 @@ function PeriodHolders({ task, colors }: { task: Task; colors: Map<string, strin
   const [to, setTo] = useState(lastOfMonth(Number(today.slice(0, 4)), Number(today.slice(5, 7))));
   const [error, setError] = useState<string | null>(null);
   const list = [...(task.holdersByPeriod ?? [])].sort((a, b) => a.from.localeCompare(b.from));
-  const name = (id: string) => findAsbAnywhere(data, id)?.name ?? '?';
+  const name = (id: string) => findAsbAnywhere(data, id)?.name ?? 'ASB removida';
+  const gone = (id: string) => !data.asbs.some((a) => a.id === id && a.active);
   const month = (shift: number) => {
     const y = Number(today.slice(0, 4));
     const m = Number(today.slice(5, 7)) + shift;
@@ -232,6 +234,7 @@ function PeriodHolders({ task, colors }: { task: Task; colors: Map<string, strin
                 <span className="chip static" style={{ background: colors.get(h.asbId) ?? '#555' }}>{name(h.asbId)}</span>{' '}
                 <span className="mono">{formatDate(h.from)} a {formatDate(h.to)}</span>
                 {h.to < today && <span className="muted small"> (já passou)</span>}
+                {h.to >= today && gone(h.asbId) && <span className="error small"> (saiu da equipe ou está inativa: não vale; remova)</span>}
               </span>
               <button className="btn sm" onClick={() => remove(h.id)}>Remover</button>
             </li>

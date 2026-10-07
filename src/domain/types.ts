@@ -171,7 +171,8 @@ export interface StructureSnapshot {
   tasks?: Task[];
   openDays?: number[];
   rules?: string[];
-  lunchWindow?: LunchWindow;
+  /** null = ainda não estava definido (valia o padrão). */
+  lunchWindow?: LunchWindow | null;
 }
 
 /** Horas em que o almoço pode ser marcado: blocos de `start` até `end` (exclusivo). */

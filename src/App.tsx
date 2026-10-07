@@ -105,11 +105,12 @@ function SaveIndicator() {
 function SyncIndicator() {
   const st = useStore((s) => s.syncStatus);
   if (st.state === 'off') return null;
-  const cls = st.state === 'offline' || st.state === 'error' ? 'save-indicator error' : 'save-indicator';
+  const cls = st.state === 'offline' || st.state === 'error' || st.state === 'conflict' ? 'save-indicator error' : 'save-indicator';
   const text =
     st.state === 'ok' ? `Nuvem OK ${st.at}`
     : st.state === 'syncing' ? 'Nuvem: sincronizando...'
     : st.state === 'offline' ? 'Nuvem: sem conexão (salvo aqui)'
+    : st.state === 'conflict' ? 'Nuvem: decida qual versão vale'
     : 'Nuvem: problema (veja Ajustes)';
   return <span className={cls} title={st.state === 'offline' || st.state === 'error' ? st.error : 'Sincronização entre aparelhos ligada'}>{text}</span>;
 }
@@ -121,8 +122,21 @@ function Notices() {
   const external = useStore((s) => s.externalUpdateAt);
   const lostLocal = useStore((s) => s.externalLostLocal);
   const dismiss = useStore((s) => s.dismissNotice);
+  const sync = useStore((s) => s.syncStatus);
+  const resolve = useStore((s) => s.resolveSyncConflict);
   return (
     <>
+      {sync.state === 'conflict' && (
+        <div className="backup-bar bad" role="alert">
+          <span>
+            A nuvem tem uma versão mais nova desta escala (gravada em outro aparelho) e este aparelho tem mudanças que ainda não foram enviadas.
+            Escolha qual vale; a outra fica guardada como cópia de segurança em Ajustes.
+          </span>
+          <span className="spacer" />
+          <button className="btn sm primary" onClick={() => void resolve('cloud')}>Usar a da nuvem</button>
+          <button className="btn sm" onClick={() => void resolve('mine')}>Manter a deste aparelho</button>
+        </div>
+      )}
       {blocked && (
         <div className="backup-bar bad" role="alert">
           <span>

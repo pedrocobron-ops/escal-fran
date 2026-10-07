@@ -125,7 +125,7 @@ export function MonthPdf({ m }: { m: MonthPdfModel }) {
         <Text style={[s.small, s.muted, { marginTop: 3 }]}>Semanas contadas de segunda a sexta. {weekCols} semana{weekCols > 1 ? 's' : ''} tocam o mês.</Text>
 
         {m.taskRows.length > 0 && (
-          <View style={[s.table, { marginTop: 6 }]}>
+          <View style={[s.table, { marginTop: 6 }]} minPresenceAhead={60}>
             <View style={[s.row, s.head]} fixed>
               <Text style={[s.cell, { flexBasis: 150, flexGrow: 0 }]}>Tarefa diária</Text>
               <Text style={s.cell}>Quem faz no mês</Text>
@@ -154,7 +154,7 @@ export function MonthPdf({ m }: { m: MonthPdfModel }) {
 
         {m.absences.length > 0 && (
           <View>
-            <Text style={s.h2}>5. Ausências e coberturas do mês</Text>
+            <Text style={s.h2} minPresenceAhead={60}>5. Ausências e coberturas do mês</Text>
             <View style={s.table}>
               <View style={[s.row, s.head]} fixed>
                 <Text style={s.cell}>ASB</Text>

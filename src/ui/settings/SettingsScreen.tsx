@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { HOURS, WEEKDAY_LABEL, diffDays, formatDate, formatHour, isValidIso, lunchWindowOf, todayIso, weekdayOf } from '../../domain';
-import { SupabaseRemote, SyncError, builtInProject, newSyncCode, normalizeCode, readSyncConfig, writeSyncConfig, writeSyncMeta } from '../../store/sync';
+import { SupabaseRemote, SyncError, builtInProject, listCopies, newSyncCode, normalizeCode, pruneCopies, readSyncConfig, writeSyncConfig, writeSyncMeta } from '../../store/sync';
+import { COPY_PREFIX, LocalStorageAdapter } from '../../store/storage';
 import { BackupError, backupFileName, exportBackup, parseBackup } from '../../store/storage';
 import { useData, useStore } from '../../store/useStore';
 import { Modal, Notice, useConfirm } from '../common/Modal';
@@ -169,6 +170,7 @@ export function SettingsScreen() {
           <button className="btn" onClick={() => fileRef.current?.click()}>Importar backup...</button>
           <input ref={fileRef} type="file" accept="application/json,.json" style={{ display: 'none' }} onChange={(e) => onFile(e.target.files?.[0])} />
         </div>
+        <SavedCopies onRestore={(parsed) => { replace(parsed); setNotice({ title: 'Cópia restaurada', message: 'A escala voltou a ser a da cópia escolhida. Dá para desfazer no botão Desfazer, no topo.' }); }} />
       </section>
 
       <section className="card">
@@ -273,7 +275,8 @@ function SyncSection() {
   const data = useData();
   const status = useStore((s) => s.syncStatus);
   const confirm = useConfirm();
-  const cfg = readSyncConfig();
+  // Lido uma vez: depois de criar um código, a tela do código aparece antes de recarregar.
+  const [cfg] = useState(() => readSyncConfig());
   const built = builtInProject();
   const [url, setUrl] = useState(cfg?.url ?? built?.url ?? '');
   const [key, setKey] = useState(cfg?.key ?? built?.key ?? '');
@@ -283,6 +286,7 @@ function SyncSection() {
   const [created, setCreated] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const ready = url.trim() !== '' && key.trim() !== '';
+  const [showProject, setShowProject] = useState(!ready);
 
   const restart = () => {
     useStore.getState().flush();
@@ -322,10 +326,12 @@ function SyncSection() {
       }
       const ok = await confirm({
         title: 'Usar a escala da nuvem?',
-        message: 'A escala deste aparelho será substituída pela que está na nuvem com esse código. Uma cópia do que está aqui fica guardada no navegador e você pode exportar um backup antes.',
+        message: 'A escala deste aparelho será substituída pela que está na nuvem com esse código. Uma cópia do que está aqui fica guardada no navegador (Ajustes, Backup) e você pode exportar um backup antes.',
         confirmLabel: 'Usar a escala da nuvem',
       });
       if (!ok) return;
+      await new LocalStorageAdapter().keepCopy(JSON.stringify(data));
+      pruneCopies(window.localStorage, 5);
       writeSyncConfig({ ...(built && built.url === url.trim() && built.key === key.trim() ? {} : { url: url.trim(), key: key.trim() }), code });
       writeSyncMeta({ remoteAt: null, dirty: false }, window.localStorage);
       restart();
@@ -361,13 +367,27 @@ function SyncSection() {
   const statusText =
     status.state === 'ok' ? `Sincronizado com a nuvem às ${status.at}.`
     : status.state === 'syncing' ? 'Sincronizando...'
-    : status.state === 'offline' ? `Sem conexão com a nuvem (${status.error}). As mudanças ficam guardadas aqui e sobem quando a conexão voltar.`
+    : status.state === 'offline' ? `${status.error} As mudanças ficam guardadas aqui e sobem quando a conexão voltar.`
     : status.state === 'error' ? `Problema na nuvem: ${status.error}`
+    : status.state === 'conflict' ? 'A nuvem tem uma versão mais nova e este aparelho tem mudanças não enviadas: escolha no aviso do topo qual vale.'
     : '';
 
   return (
     <section className="card">
       <h2>Sincronizar entre aparelhos</h2>
+      {created && (
+        <Modal title="Escala enviada para a nuvem" onClose={restart} keepOnBackdrop>
+          <p>Anote o código: ele é a senha da escala. Quem tiver o código vê e altera esta escala.</p>
+          <p>
+            <strong className="mono" style={{ fontSize: 18 }}>{created}</strong>{' '}
+            <button className="btn sm" onClick={() => copy(created)}>{copied ? 'Copiado' : 'Copiar'}</button>
+          </p>
+          <p className="small muted">Nos outros aparelhos: Ajustes, Sincronizar entre aparelhos, "Entrar com o código". Ao continuar, a página recarrega com a sincronização ligada.</p>
+          <div className="modal-actions">
+            <button className="btn primary" onClick={restart}>Continuar</button>
+          </div>
+        </Modal>
+      )}
       {cfg ? (
         <>
           <p className="small">
@@ -384,23 +404,13 @@ function SyncSection() {
             <button className="btn danger" onClick={disable}>Desligar neste aparelho</button>
           </div>
         </>
-      ) : created ? (
-        <div className="note ok">
-          <p><strong>Escala enviada para a nuvem.</strong> Anote o código: ele é a senha da escala.</p>
-          <p>
-            <strong className="mono" style={{ fontSize: 16 }}>{created}</strong>{' '}
-            <button className="btn sm" onClick={() => copy(created)}>{copied ? 'Copiado' : 'Copiar'}</button>
-          </p>
-          <p className="small">Nos outros aparelhos: Ajustes, Sincronizar entre aparelhos, "Entrar com um código".</p>
-          <button className="btn primary" onClick={restart}>Continuar</button>
-        </div>
       ) : (
         <>
           <p className="muted small">
             Desligada: os dados ficam só neste aparelho. Ligando, a escala fica guardada na nuvem e qualquer computador ou celular com o código vê e altera a mesma escala.
           </p>
           {!built && (
-            <details style={{ marginBottom: 8 }} open={!ready}>
+            <details style={{ marginBottom: 8 }} open={showProject} onToggle={(e) => setShowProject((e.target as HTMLDetailsElement).open)}>
               <summary className="small">Projeto na nuvem (Supabase)</summary>
               <div className="field-row">
                 <div className="field"><label>Endereço do projeto (URL)</label><input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://xxxx.supabase.co" /></div>
@@ -425,5 +435,62 @@ function SyncSection() {
         </>
       )}
     </section>
+  );
+}
+
+/** Cópias de segurança que o app guardou no navegador (antes de trocar a escala por outra versão). */
+function SavedCopies({ onRestore }: { onRestore: (data: ReturnType<typeof parseBackup>) => void }) {
+  const confirm = useConfirm();
+  const [tick, setTick] = useState(0);
+  let copies: Array<{ key: string; when: string }> = [];
+  try {
+    copies = listCopies(window.localStorage);
+  } catch {
+    copies = [];
+  }
+  if (copies.length === 0) return null;
+  const label = (when: string) => {
+    const d = new Date(when);
+    return Number.isNaN(d.getTime()) ? when : `${d.toLocaleDateString('pt-BR')} às ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  };
+  const raw = (key: string) => window.localStorage.getItem(key) ?? '';
+  const baixar = (key: string) => {
+    const blob = new Blob([raw(key)], { type: 'application/json' });
+    downloadBlob(blob, `escala-ceo-copia-${key.slice(COPY_PREFIX.length).replace(/[:.]/g, '-')}.json`);
+  };
+  const restaurar = async (key: string) => {
+    try {
+      const parsed = parseBackup(raw(key));
+      const ok = await confirm({
+        title: 'Restaurar esta cópia?',
+        message: `A escala atual será substituída pela cópia de ${label(key.slice(COPY_PREFIX.length))} (${parsed.asbs.length} ASBs, ${parsed.base.slots.length} fichas). Dá para desfazer no botão Desfazer, no topo.`,
+        confirmLabel: 'Restaurar',
+        danger: true,
+      });
+      if (ok) onRestore(parsed);
+    } catch {
+      // cópia inválida: não oferece
+    }
+  };
+  const apagar = (key: string) => {
+    window.localStorage.removeItem(key);
+    setTick(tick + 1);
+  };
+  return (
+    <div style={{ marginTop: 10 }}>
+      <p className="small muted" style={{ marginBottom: 4 }}>Cópias guardadas no navegador (antes de trocar a escala pela nuvem, de recuperar dados ou de resolver um conflito):</p>
+      <ul className="plain-list">
+        {copies.map((c) => (
+          <li key={c.key}>
+            <span>{label(c.when)}</span>
+            <span style={{ display: 'inline-flex', gap: 4 }}>
+              <button className="btn sm" onClick={() => baixar(c.key)}>Baixar</button>
+              <button className="btn sm" onClick={() => restaurar(c.key)}>Restaurar</button>
+              <button className="btn sm" onClick={() => apagar(c.key)}>Apagar</button>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

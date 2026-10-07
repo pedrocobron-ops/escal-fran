@@ -17,7 +17,7 @@ import {
 import { getEventCoordinates } from '@dnd-kit/utilities';
 import type { Alert, AppData, Asb, EffectiveDay, EffectiveSlot, IsoDate, SlotKind } from '../../domain';
 import {
-  HOURS, WEEKDAY_SHORT, addDays, allowedHours, dataForDate, analyze, baseDay, canAssign, canAssignOn, canLunchAt, dentistsAt, effectiveDay, formatBlock, formatDate,
+  HOURS, WEEKDAY_SHORT, addDays, allowedHours, dataForDate, analyze, baseDay, canAssign, canAssignOn, canLunchAt, dentistsAt, lunchWindowOf, effectiveDay, formatBlock, formatDate,
   formatDayMonth, adjustedSlotCount, findAsbAnywhere, formatHour, formatRange, isExternalSubstitute, isTeamSubstitute, isValidIso, mondayOf, proteseAlerts, todayIso, validHours, weekdayOf,
 } from '../../domain';
 import {
@@ -31,7 +31,7 @@ import { AlertsPanel } from './AlertsPanel';
 import { Chip, ChipOverlay, type DragItem } from './Chip';
 import { ChoiceDialog, RangeDialog, type Choice } from './RangeDialog';
 import { cellKey, columnKeyOf, columnsFor, type Column } from './model';
-import { isRoomEntry, placeInBase, placeInDay, roomDropPlan, sameTarget } from './placement';
+import { isRoomEntry, placeInBase, placeInDay, roomDropKind, sameTarget, type PlaceMode } from './placement';
 
 type Mode = 'base' | 'week';
 type SlotItem = DragItem & { type: 'slot' };
@@ -141,7 +141,7 @@ export function Board() {
     const fromHash = dateFromHash();
     if (fromHash) {
       window.history.replaceState(null, '', '#/quadro');
-      return { mode: 'week' as Mode, date: fromHash };
+      return { mode: 'week' as Mode, date: pickOpenDay(current, fromHash) };
     }
     return { mode: lastMode, date: lastDate ?? pickOpenDay(current, todayIso()) };
   });
@@ -154,6 +154,13 @@ export function Board() {
   const [active, setActive] = useState<DragItem | null>(null);
   const [pending, setPending] = useState<PendingRange | null>(null);
   const [choice, setChoice] = useState<PendingChoice | null>(null);
+  const [flash, setFlash] = useState<string | null>(null);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const notify = (msg: string) => {
+    setFlash(msg);
+    if (flashTimer.current) clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setFlash(null), 3000);
+  };
   const shiftRef = useRef(false);
   const headRef = useRef<HTMLDivElement>(null);
   const paletteRef = useRef<HTMLElement>(null);
@@ -203,8 +210,9 @@ export function Board() {
   const cellAlerts = useMemo(() => {
     const m = new Map<string, Alert['level']>();
     for (const a of alerts) {
-      if (a.roomId === undefined || a.hour === undefined || a.level === 'info') continue;
-      const k = cellKey(`sala:${a.roomId}`, a.hour);
+      if (a.hour === undefined || a.level === 'info') continue;
+      if (a.roomId === undefined && a.code !== 'almoco-fora-do-horario') continue;
+      const k = a.roomId !== undefined ? cellKey(`sala:${a.roomId}`, a.hour) : cellKey('kind:almoco', a.hour);
       const cur = m.get(k);
       if (cur !== 'critico') m.set(k, a.level);
     }
@@ -239,9 +247,9 @@ export function Board() {
 
   /** Monta a mudança de colocar a ASB nas horas `hours` da coluna (ver placement.ts). */
   const placement = useCallback(
-    (asbId: string, hours: number[], column: Column, keepOthers: boolean, orig?: SlotItem, asApoio = false) => {
+    (asbId: string, hours: number[], column: Column, mode: PlaceMode, orig?: SlotItem, asApoio = false) => {
       const target: CellTarget = asApoio && column.roomId ? { kind: 'apoio', roomId: column.roomId } : targetOf(column);
-      const p = { asbId, hours, target, keepOthers, orig };
+      const p = { asbId, hours, target, mode, orig };
       if (!isDay) return (d: AppData) => placeInBase(d, p);
       // Mexer numa ficha posta pelo app (substituta ou remanejada) é decisão manual: o app não a recoloca.
       const hold = !!orig && isAutomatic(orig.asbId, orig.hour, orig.kind, orig.roomId);
@@ -264,27 +272,31 @@ export function Board() {
   );
 
   /**
-   * Coloca a ASB nas horas da coluna, sem perguntas (pedido do cliente). Numa sala: ela
-   * vira a ASB da sala quando a sala está livre e ela não está em outra sala nessa hora;
-   * senão entra de apoio e continua onde estava. `extraHour`: registra também a hora extra
-   * desse bloco, na mesma mudança.
+   * Coloca a ASB nas horas da coluna, sem perguntas (pedido do cliente).
+   * - Coluna de apoio, CME, almoxarifado ou almoço: ela sai de tudo o que fazia nessa hora.
+   * - Sala, ficha da lista: acrescenta. Sala livre (e ela sem outra sala) = ASB da sala;
+   *   senão apoio. Nada mais muda nessa hora.
+   * - Sala, ficha do quadro, na mesma hora: sala com ASB (ou ela em outra sala) = entra de
+   *   apoio e continua onde estava; sala livre = muda de lugar. Para outra hora: a ficha
+   *   sempre sai da hora de origem. Numa faixa, vale a decisão da primeira hora para todas,
+   *   para o resultado não sair misturado.
+   * `extraHour`: registra também a hora extra desse bloco, na mesma mudança.
    */
   const decide = (asb: Asb, hours: number[], column: Column, orig?: SlotItem, extraHour?: number) => {
     const target = targetOf(column);
+    const roomHasAsbAt = (h: number) =>
+      day.slots.some((x) => x.kind === 'sala' && x.roomId === target.roomId && x.hour === h && !(x.who.type === 'asb' && x.who.asbId === asb.id));
+    const inAnotherRoomAt = (h: number) =>
+      entriesAt(asb.id, h).some((x) => isRoomEntry(x) && x.roomId !== target.roomId && !(orig && h === orig.hour && sameTarget(x, { kind: orig.kind, roomId: orig.roomId })));
     const steps: Array<(d: AppData) => void> = [];
     if (target.kind !== 'sala') {
-      steps.push(placement(asb.id, hours, column, false, orig));
+      steps.push(placement(asb.id, hours, column, 'replace', orig));
+    } else if (!orig) {
+      for (const h of hours) steps.push(placement(asb.id, [h], column, 'add', undefined, roomDropKind(roomHasAsbAt(h), inAnotherRoomAt(h)) === 'apoio'));
     } else {
-      for (const h of hours) {
-        const roomHasAsb = day.slots.some(
-          (x) => x.kind === 'sala' && x.roomId === target.roomId && x.hour === h && !(x.who.type === 'asb' && x.who.asbId === asb.id),
-        );
-        const inAnotherRoom = entriesAt(asb.id, h).some(
-          (x) => isRoomEntry(x) && x.roomId !== target.roomId && !(orig && h === orig.hour && sameTarget(x, { kind: orig.kind, roomId: orig.roomId })),
-        );
-        const plan = roomDropPlan(roomHasAsb, inAnotherRoom);
-        steps.push(placement(asb.id, [h], column, plan.keepOthers, orig, plan.kind === 'apoio'));
-      }
+      const kind = roomDropKind(roomHasAsbAt(hours[0]), inAnotherRoomAt(hours[0]));
+      const sameHour = hours.includes(orig.hour);
+      steps.push(placement(asb.id, hours, column, kind === 'apoio' && sameHour ? 'add' : 'move', orig, kind === 'apoio'));
     }
     apply((d) => {
       if (extraHour !== undefined) addExtraHour(d, asb.id, date, extraHour);
@@ -336,10 +348,15 @@ export function Board() {
     }
     if (!allowedAt(asb, over.hour)) {
       if (isDay && HOURS.includes(over.hour) && over.column.kind !== 'almoco') askExtra(asb, over.column, over.hour, orig);
+      else notify(`${asb.name} trabalha ${formatRange(asb.start, asb.end)}: às ${formatHour(over.hour)} ela não está no CEO${isDay ? '' : ' (na escala da semana dá para registrar hora extra)'}.`);
       return;
     }
     // Almoço só dentro do horário de almoço (12h–15h por padrão).
-    if (over.column.kind === 'almoco' && !canLunchAt(data, over.hour)) return;
+    if (over.column.kind === 'almoco' && !canLunchAt(data, over.hour)) {
+      const lw = lunchWindowOf(data);
+      notify(`Almoço só entre ${formatHour(lw.start)} e ${formatHour(lw.end)} (ajustável em Ajustes).`);
+      return;
+    }
     if (wantRange && allowedAt(asb, over.hour + 1) && over.column.kind !== 'almoco') {
       setPending({ asbId: asb.id, column: over.column, fromHour: over.hour, orig });
       return;
@@ -438,6 +455,7 @@ export function Board() {
       </div>
 
       {isDay && <DayTabs current={current} days={weekDays} date={date} onPick={setDate} />}
+      {flash && <p className="note warn flash" role="status">{flash}</p>}
       {!isDay && <TodayHint current={current} onOpen={() => { setDate(pickOpenDay(current, todayIso())); setMode('week'); }} />}
       {isDay && date < todayIso() && (
         <p className="muted small" style={{ marginTop: -4 }}>
@@ -466,8 +484,9 @@ export function Board() {
         // Rolagem automática só bem perto da borda e devagar: no celular (em pé ou deitado)
         // a coluna da borda precisa poder ser alvo sem o quadro correr para a seguinte.
         autoScroll={{
-          threshold: { x: 0.04, y: 0.06 },
-          acceleration: 3,
+          threshold: { x: 0.04, y: 0.05 },
+          acceleration: 2,
+          interval: 15,
           canScroll: (el) => el.classList.contains('board-scroll') || (el === document.scrollingElement && !overPaletteRef.current),
         }}
       >
@@ -614,10 +633,11 @@ function slotTip(s: EffectiveSlot, asb: Asb, asbById: Map<string, Asb>, freeRoom
 function Cell({ column, hour, day, slots, alertLevel, activeAsb, allowedAt, lunchOk, extraOk, colors, asbById, readOnly, onRemove }: CellProps) {
   const valid = activeAsb ? allowedAt(activeAsb, hour) && (column.kind !== 'almoco' || lunchOk) : undefined;
   const asExtra = valid === false && extraOk && column.kind !== 'almoco' && (!activeAsb || !allowedAt(activeAsb, hour));
+  // Célula inválida continua recebendo o drop, para o quadro explicar por que não aceitou.
   const { setNodeRef, isOver } = useDroppable({
     id: `cell:${column.key}:${hour}`,
     data: { type: 'cell', column, hour } satisfies CellData,
-    disabled: readOnly || (valid === false && !asExtra),
+    disabled: readOnly,
   });
   const dentists = column.roomId ? dentistsAt(day.dentists, column.roomId, hour) : [];
   const off = column.roomId ? dentistsAt(day.dentistsOff, column.roomId, hour) : [];
@@ -705,14 +725,15 @@ function Palette({ ref, day, asbs, colors, readOnly, isDay, active, alerts }: Pa
             : active?.type === 'slot'
               ? 'Solte aqui para remover.'
               : isDay
-                ? 'O que você arrastar aqui vale só para este dia. Soltar numa sala que já tem ASB (ou estando em outra sala) entra como apoio. Fora do horário da ASB, pergunta se é hora extra.'
-                : 'Arraste uma ficha para o quadro. No celular, segure a ficha antes de arrastar. Soltar numa sala que já tem ASB (ou estando em outra sala) entra como apoio.'}
+                ? 'O que você arrastar aqui vale só para este dia. Da lista para uma sala: acrescenta (ela continua onde estava); sala ocupada vira apoio. Para apoio, CME, almoxarifado ou almoço ela sai de onde estava. Fora do horário dela, pergunta se é hora extra.'
+                : 'Arraste uma ficha para o quadro. Da lista para uma sala: acrescenta (ela continua onde estava); sala ocupada vira apoio. Para apoio, CME, almoxarifado ou almoço ela sai de onde estava. Ficha do quadro: move, exceto para sala ocupada, onde vira apoio e fica também onde estava.'}
         </p>
         {!readOnly && (
           <p className="muted hint-touch">
             Segure a ficha meio segundo e arraste.{isDay ? ' Fora do horário dela, pergunta se é hora extra.' : ''} Solte na paleta para tirar.
           </p>
         )}
+        {active?.type === 'slot' && !readOnly && <span className="palette-drop-badge">Solte aqui para tirar a ficha</span>}
         <div className="palette-list">
           {sorted.map((asb) => {
             const abs = absenceOf(asb.id);
@@ -839,12 +860,12 @@ function DayTabs({ current, days, date, onPick }: { current: AppData; days: IsoD
             aria-selected={d === date}
             className={`day-tab${d === date ? ' active' : ''}${d === today ? ' today' : ''}${mk?.closed ? ' closed' : ''}`}
             onClick={() => onPick(d)}
-            title={mk?.closed ? `CEO fechado${mk.note ? ` (${mk.note})` : ''}` : mk && mk.critical > 0 ? `${mk.critical} sala(s) sem ASB` : undefined}
+            title={mk?.closed ? `CEO fechado${mk.note ? ` (${mk.note})` : ''}` : mk && mk.critical > 0 ? `${mk.critical} alerta${mk.critical > 1 ? 's' : ''} crítico${mk.critical > 1 ? 's' : ''} neste dia` : undefined}
           >
             <span className="day-tab-name">{WEEKDAY_SHORT[weekdayOf(d)]}</span>
             <span className="day-tab-date">{formatDayMonth(d)}</span>
             {mk?.closed ? <span className="day-tab-mark closed">fechado</span> : null}
-            {mk && !mk.closed && mk.critical > 0 ? <span className="day-tab-mark bad" aria-label="sala sem ASB">{mk.critical}</span> : null}
+            {mk && !mk.closed && mk.critical > 0 ? <span className="day-tab-mark bad" aria-label="alertas críticos">{mk.critical}</span> : null}
             {mk && !mk.closed && mk.critical === 0 && mk.absences > 0 ? <span className="day-tab-mark info" aria-label="ausências">{mk.absences}</span> : null}
           </button>
         );

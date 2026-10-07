@@ -17,7 +17,9 @@ export function dataForDate(data: AppData, date: IsoDate | ''): AppData {
   for (let i = hist.length - 1; i >= 0 && hist[i].until >= date; i--) {
     const snap = hist[i];
     for (const key of STRUCTURE_KEYS) {
-      if (snap[key] !== undefined) (out as unknown as Record<string, unknown>)[key] = snap[key];
+      const v = (snap as unknown as Record<string, unknown>)[key];
+      // null no registro = o campo ainda não existia nessa época (ex.: horário de almoço padrão).
+      if (v !== undefined) (out as unknown as Record<string, unknown>)[key] = v === null ? undefined : v;
     }
   }
   return out;
@@ -44,13 +46,13 @@ export function recordHistory(prev: AppData, next: AppData, today: IsoDate): Str
   if (last && last.until === yesterday) {
     const merged: StructureSnapshot = { ...last };
     for (const k of keys) {
-      if (merged[k] === undefined) (merged as unknown as Record<string, unknown>)[k] = structuredClone(prev[k]);
+      if (merged[k] === undefined) (merged as unknown as Record<string, unknown>)[k] = prev[k] === undefined ? null : structuredClone(prev[k]);
     }
     hist[hist.length - 1] = merged;
     return hist;
   }
   const snap: StructureSnapshot = { until: yesterday };
-  for (const k of keys) (snap as unknown as Record<string, unknown>)[k] = structuredClone(prev[k]);
+  for (const k of keys) (snap as unknown as Record<string, unknown>)[k] = prev[k] === undefined ? null : structuredClone(prev[k]);
   hist.push(snap);
   return hist;
 }

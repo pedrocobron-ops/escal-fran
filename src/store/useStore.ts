@@ -56,6 +56,8 @@ interface StoreState {
   /** Sincronização entre aparelhos (nuvem). */
   syncStatus: SyncStatus;
   setSyncStatus(s: SyncStatus): void;
+  /** Conflito entre esta cópia e a nuvem: manter a daqui ou usar a da nuvem. */
+  resolveSyncConflict(choice: 'mine' | 'cloud'): Promise<void>;
   dismissNotice(which: 'firstUse' | 'externalUpdateAt'): void;
 }
 
@@ -161,6 +163,18 @@ export const useStore = create<StoreState>((set, get) => {
     syncStatus: { state: 'off' },
     setSyncStatus(s) {
       set({ syncStatus: s });
+    },
+    async resolveSyncConflict(choice) {
+      const { adapter } = get();
+      const a = adapter as (StorageAdapter & { resolveConflict?: (c: 'mine' | 'cloud', onData: (d: AppData) => void) => Promise<void> }) | null;
+      if (!a?.resolveConflict) return;
+      if (choice === 'mine') get().flush();
+      await a.resolveConflict(choice, (data) => {
+        if (saveTimer) clearTimeout(saveTimer);
+        saveTimer = null;
+        pending = null;
+        set({ data, past: [], future: [], saving: false, externalUpdateAt: clock(), externalLostLocal: false });
+      });
     },
 
     dismissNotice(which) {

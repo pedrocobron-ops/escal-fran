@@ -6,23 +6,23 @@ import { DEFAULT_LUNCH_WINDOW, analyze, canLunchAt, effectiveDay, lunchWindowOf,
 import { baseEntriesAt, clearSchedule } from '../src/store/useStore';
 import { MemoryAdapter, parseBackup, repairBackup } from '../src/store/storage';
 import { SupabaseRemote, SyncedAdapter, newSyncCode, normalizeCode, type SyncStatus } from '../src/store/sync';
-import { keptAt, placeInBase, roomDropPlan } from '../src/ui/board/placement';
+import { keptAt, placeInBase, roomDropKind } from '../src/ui/board/placement';
 import { dayPdfModel, describeTaskHolder, monthPdfModel } from '../src/pdf/model';
 import { ID, absence, seed } from './helpers';
 
 const rooms = (d: AppData, asbId: string, hour: number) => baseEntriesAt(d, asbId, hour).map((e) => `${e.kind}:${e.roomId ?? ''}`).sort();
 
 describe('pedido 6: duas por célula, apoio automático', () => {
-  it('regra: sala livre e ASB livre vira ASB da sala; senão apoio, continuando onde estava', () => {
-    expect(roomDropPlan(false, false)).toEqual({ kind: 'sala', keepOthers: false });
-    expect(roomDropPlan(true, false)).toEqual({ kind: 'apoio', keepOthers: true });
-    expect(roomDropPlan(false, true)).toEqual({ kind: 'apoio', keepOthers: true });
+  it('regra: sala livre e ASB livre vira ASB da sala; senão apoio', () => {
+    expect(roomDropKind(false, false)).toBe('sala');
+    expect(roomDropKind(true, false)).toBe('apoio');
+    expect(roomDropKind(false, true)).toBe('apoio');
   });
 
   it('da Sala 3 jogada na Sala 4 entra como apoio e continua na Sala 3', () => {
     const d = seed();
     // Andrea 08h: Sala 3. Solta da paleta na Sala 4 (Pâmela já é a ASB).
-    placeInBase(d, { asbId: ID.andrea, hours: [8], target: { kind: 'apoio', roomId: 's4' }, keepOthers: true });
+    placeInBase(d, { asbId: ID.andrea, hours: [8], target: { kind: 'apoio', roomId: 's4' }, mode: 'add' });
     expect(rooms(d, ID.andrea, 8)).toEqual(['apoio:s4', 'sala:s3']);
     const day = effectiveDay(d, '2026-10-07');
     const al = analyze(d, day);
@@ -33,7 +33,7 @@ describe('pedido 6: duas por célula, apoio automático', () => {
   it('quem está de apoio conta como presença: a sala não fica sem ASB', () => {
     const d = seed();
     clearSchedule(d);
-    placeInBase(d, { asbId: ID.laura, hours: [8], target: { kind: 'apoio', roomId: 's1' }, keepOthers: false });
+    placeInBase(d, { asbId: ID.laura, hours: [8], target: { kind: 'apoio', roomId: 's1' }, mode: 'add' });
     const day = effectiveDay(d, '2026-10-07');
     expect(analyze(d, day).some((a) => a.code === 'sala-sem-asb' && a.roomId === 's1' && a.hour === 8)).toBe(false);
     const row = dayPdfModel(d, '2026-10-07').rows[1];
@@ -42,12 +42,22 @@ describe('pedido 6: duas por célula, apoio automático', () => {
     expect(day.slots.filter((s) => s.roomId === 's1' && s.hour === 8)).toHaveLength(1);
   });
 
-  it('mover a própria ficha sai de onde estava; arrastar da lista acrescenta', () => {
+  it('da lista acrescenta sem tirar de onde está (inclusive almoxarifado e apoio geral)', () => {
     const d = seed();
-    placeInBase(d, { asbId: ID.laura, hours: [10], target: { kind: 'apoio', roomId: 's2' }, keepOthers: true, orig: { hour: 9, kind: 'sala', roomId: 's1' } });
-    expect(rooms(d, ID.laura, 9)).toEqual([]);
-    expect(rooms(d, ID.laura, 10)).toEqual(['apoio:s2', 'sala:s1']);
-    expect(keptAt({ asbId: ID.laura, hours: [10], target: { kind: 'sala', roomId: 's3' }, keepOthers: false }, 10, [{ kind: 'sala', roomId: 's1' }, { kind: 'almoco' }])).toEqual([]);
+    // Amanda 09h: almoxarifado. Da lista para a Sala 1 (Laura lá): apoio e continua no almoxarifado.
+    placeInBase(d, { asbId: ID.amanda, hours: [9], target: { kind: 'apoio', roomId: 's1' }, mode: 'add' });
+    expect(rooms(d, ID.amanda, 9)).toEqual(['almox:', 'apoio:s1']);
+    // Coluna de apoio: sai de tudo o que fazia nessa hora.
+    placeInBase(d, { asbId: ID.amanda, hours: [9], target: { kind: 'cme' }, mode: 'replace' });
+    expect(rooms(d, ID.amanda, 9)).toEqual(['cme:']);
+    expect(keptAt({ asbId: ID.laura, hours: [10], target: { kind: 'sala', roomId: 's3' }, mode: 'move', orig: { hour: 10, kind: 'sala', roomId: 's1' } }, 10, [{ kind: 'sala', roomId: 's1' }, { kind: 'almoco' }])).toEqual([{ kind: 'almoco' }]);
+  });
+
+  it('faixa com ficha do quadro: move em todas as horas, sem perder a primeira', () => {
+    const d = seed();
+    // Laura: Sala 1 08h–10h. Move a faixa 08h–11h para a Sala 2 (livre às 08h).
+    placeInBase(d, { asbId: ID.laura, hours: [8, 9, 10], target: { kind: 'sala', roomId: 's2' }, mode: 'move', orig: { hour: 8, kind: 'sala', roomId: 's1' } });
+    expect([8, 9, 10].map((h) => rooms(d, ID.laura, h))).toEqual([['sala:s2'], ['sala:s2'], ['sala:s2']]);
   });
 });
 
@@ -228,5 +238,126 @@ describe('projeto da nuvem no código', () => {
     const p = builtInProject();
     expect(p?.url).toBe('https://pifuiczrytmizqxzygbi.supabase.co');
     expect(p?.key.startsWith('eyJ')).toBe(true);
+  });
+});
+
+describe('correções da rodada de testes de 07/10', () => {
+  it('histórico: definir o horário de almoço hoje não muda os dias passados', async () => {
+    const { recordHistory, dataForDate } = await import('../src/domain');
+    const d0 = seed();
+    d0.historySince = '2026-09-01';
+    const d1 = structuredClone(d0);
+    d1.lunchWindow = { start: 13, end: 15 };
+    d1.history = recordHistory(d0, d1, '2026-10-07');
+    const again = JSON.parse(JSON.stringify(d1)) as AppData; // como fica depois de salvar
+    expect(canLunchAt(dataForDate(again, '2026-10-06'), 12)).toBe(true);
+    expect(canLunchAt(dataForDate(again, '2026-10-07'), 12)).toBe(false);
+  });
+
+  it('responsável fixa aparece no rodízio do mês e some quando sai da equipe', async () => {
+    const { monthRotation } = await import('../src/domain');
+    const d = seed();
+    const task = d.tasks.find((t) => t.assignment.mode === 'rotation' && t.assignment.period === 'week')!;
+    task.holdersByPeriod = [{ id: 'fx', asbId: ID.ana, from: '2026-10-01', to: '2026-10-31' }];
+    const r = monthRotation(d, task, 2026, 10, '2026-10-07')!;
+    expect(r.weeks.every((w) => w.titularId === ID.ana)).toBe(true);
+    d.absences.push(absence({ asbId: ID.ana, from: '2026-10-13', to: '2026-10-14' }));
+    expect(describeTaskHolder(d, d.tasks.find((t) => t.name.startsWith('Conferência de prótese (11h'))!, '2026-10-01', '2026-10-31')).not.toContain('Ana');
+    const conf = d.tasks.find((t) => t.name.startsWith('Conferência de prótese (11h'))!;
+    conf.holdersByPeriod = [{ id: 'fx2', asbId: ID.ana, from: '2026-10-01', to: '2026-10-31' }];
+    expect(describeTaskHolder(d, conf, '2026-10-01', '2026-10-31')).toContain('Ana (o mês inteiro; ausente 13/10 a 14/10)');
+    d.asbs.find((a) => a.id === ID.ana)!.active = false;
+    expect(describeTaskHolder(d, conf, '2026-10-01', '2026-10-31')).toBe('quem estiver na Sala 1 com Dra. Priscila (11h–15h)');
+  });
+
+  it('endereço do projeto ganha https:// e perde a barra final', async () => {
+    const { normalizeUrl } = await import('../src/store/sync');
+    expect(normalizeUrl(' abc.supabase.co/ ')).toBe('https://abc.supabase.co');
+    expect(normalizeUrl('http://localhost:4190/')).toBe('http://localhost:4190');
+  });
+});
+
+describe('sincronização: conflito entre aparelhos', () => {
+  function cloud() {
+    const rows = new Map<string, { data: unknown; updated_at: string }>();
+    let tick = 0;
+    const fetchFn = async (url: string, init?: RequestInit) => {
+      const name = url.split('/rpc/')[1];
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+      const code = String(body.p_codigo);
+      const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status, headers: { 'Content-Type': 'application/json' } });
+      if (name === 'escala_get') { const r = rows.get(code); return json(r ? [r] : []); }
+      if (name === 'escala_version') return json(rows.get(code)?.updated_at ?? null);
+      if (name === 'escala_put') {
+        const cur = rows.get(code);
+        const expected = body.p_expected as string | null;
+        if (cur && expected && cur.updated_at !== expected) return json({ message: 'conflito: a nuvem tem uma versao mais nova' }, 400);
+        tick++;
+        const at = `2026-10-07T10:00:${String(tick).padStart(2, '0')}Z`;
+        rows.set(code, { data: body.p_data, updated_at: at });
+        return json(at);
+      }
+      return json({ message: 'no' }, 404);
+    };
+    return { rows, fetchFn };
+  }
+  const mem = () => { const m = new Map<string, string>(); return { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v), removeItem: (k: string) => void m.delete(k), key: (i: number) => [...m.keys()][i] ?? null, get length() { return m.size; }, clear: () => m.clear() } as unknown as Storage; };
+
+  it('aparelho parado com mudança pendente não apaga o trabalho do outro: vira conflito e a pessoa decide', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const c = cloud();
+    const cfg = { url: 'https://x.supabase.co', key: 'k', code: 'ceo-conf-lito-0001' };
+    const statusA: SyncStatus[] = [];
+    const lsA = mem(); const localA = new MemoryAdapter(); localA.raw = JSON.stringify(seed());
+    const a = new SyncedAdapter(localA, new SupabaseRemote(cfg, c.fetchFn), lsA, (s) => statusA.push(s), () => true);
+    await a.load();
+    await vi.advanceTimersByTimeAsync(50);
+    const lsB = mem(); const localB = new MemoryAdapter();
+    const b = new SyncedAdapter(localB, new SupabaseRemote(cfg, c.fetchFn), lsB, () => undefined, () => true);
+    await b.load();
+    // B trabalha e envia
+    const fromB = seed(); fromB.rules = ['DE B'];
+    await b.save(fromB);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect((c.rows.get(cfg.code)!.data as AppData).rules).toEqual(['DE B']);
+    // A (que não viu a versão de B) muda e tenta enviar
+    const fromA = seed(); fromA.rules = ['DE A'];
+    await a.save(fromA);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect((c.rows.get(cfg.code)!.data as AppData).rules).toEqual(['DE B']); // nada sobrescrito
+    expect(statusA.at(-1)?.state).toBe('conflict');
+    // A decide usar a da nuvem: fica com DE B e a versão de A vira cópia
+    let got: AppData | null = null;
+    await a.resolveConflict('cloud', (d) => { got = d; });
+    expect(got!.rules).toEqual(['DE B']);
+    expect(Object.keys(localA.copies)).toHaveLength(1);
+    expect(statusA.at(-1)?.state).toBe('ok');
+    // e depois consegue gravar normalmente
+    const next = seed(); next.rules = ['DE A DEPOIS'];
+    await a.save(next);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect((c.rows.get(cfg.code)!.data as AppData).rules).toEqual(['DE A DEPOIS']);
+    vi.useRealTimers();
+  });
+
+  it('"manter a deste aparelho" grava por cima e guarda a da nuvem como cópia', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const c = cloud();
+    const cfg = { url: 'https://x.supabase.co', key: 'k', code: 'ceo-conf-lito-0002' };
+    const lsA = mem(); const localA = new MemoryAdapter(); localA.raw = JSON.stringify(seed());
+    const statusA: SyncStatus[] = [];
+    const a = new SyncedAdapter(localA, new SupabaseRemote(cfg, c.fetchFn), lsA, (s) => statusA.push(s), () => true);
+    await a.load();
+    await vi.advanceTimersByTimeAsync(50);
+    const other = seed(); other.rules = ['OUTRO'];
+    c.rows.set(cfg.code, { data: other, updated_at: '2026-10-07T11:00:00Z' }); // alguém gravou por fora
+    const mine = seed(); mine.rules = ['MINHA'];
+    await a.save(mine);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(statusA.at(-1)?.state).toBe('conflict');
+    await a.resolveConflict('mine', () => undefined);
+    expect((c.rows.get(cfg.code)!.data as AppData).rules).toEqual(['MINHA']);
+    expect(Object.values(localA.copies).some((raw) => (JSON.parse(raw) as AppData).rules[0] === 'OUTRO')).toBe(true);
+    vi.useRealTimers();
   });
 });

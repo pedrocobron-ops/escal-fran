@@ -224,10 +224,13 @@ export function monthRotation(current: AppData, task: Task, year: number, month:
     const t = dataForDate(current, date < today ? date : today).tasks.find((x) => x.id === task.id);
     return t && t.assignment.mode === 'rotation' ? t.assignment : undefined;
   };
+  const taskAsOf = (date: IsoDate) => dataForDate(current, date < today ? date : today).tasks.find((x) => x.id === task.id) ?? task;
   if (task.assignment.period === 'month') {
     const first = weeks[0]?.days[0] ?? `${year}-${String(month).padStart(2, '0')}-01`;
     const a = asOf(lastOfMonth(year, month));
-    return a ? { taskId: task.id, period: 'month', weeks: [], monthTitularId: rotationTitular(a, first) } : undefined;
+    // Responsável fixa no período vale acima do rodízio.
+    const fixed = periodHolderOn(taskAsOf(first), first);
+    return a ? { taskId: task.id, period: 'month', weeks: [], monthTitularId: fixed?.asbId ?? rotationTitular(a, first) } : undefined;
   }
   const entries: RotationWeekEntry[] = [];
   for (const week of weeks) {
@@ -235,7 +238,8 @@ export function monthRotation(current: AppData, task: Task, year: number, month:
     if (taskDays.length === 0) continue;
     const a = asOf(taskDays[taskDays.length - 1]);
     if (!a) continue;
-    const titularId = rotationTitular(a, week.monday);
+    const fixed = periodHolderOn(taskAsOf(taskDays[0]), taskDays[0]);
+    const titularId = fixed?.asbId ?? rotationTitular(a, week.monday);
     if (!titularId) continue;
     const absentDays = taskDays.filter((d) => absenceFor(current, titularId, d) !== undefined);
     entries.push({ week, titularId, absentDays });
