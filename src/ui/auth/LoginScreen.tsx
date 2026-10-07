@@ -3,10 +3,27 @@ import { AuthError, parseRecoveryHash, type AuthClient } from '../../store/auth'
 
 type Mode = 'login' | 'recover' | 'sent' | 'new-password';
 
+/** Último e-mail usado neste aparelho, para não digitar de novo. */
+const LAST_EMAIL_KEY = 'escala-ceo:ultimo-email';
+function readLastEmail(): string {
+  try {
+    return window.localStorage.getItem(LAST_EMAIL_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+function writeLastEmail(email: string): void {
+  try {
+    window.localStorage.setItem(LAST_EMAIL_KEY, email.trim());
+  } catch {
+    // sem localStorage
+  }
+}
+
 /** Tela de entrada: e-mail e senha da conta, "esqueci a senha" e a troca de senha pelo link do e-mail. */
 export function LoginScreen({ auth, onDone }: { auth: AuthClient; onDone: () => void }) {
   const [mode, setMode] = useState<Mode>('login');
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(readLastEmail);
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [busy, setBusy] = useState(false);
@@ -39,6 +56,7 @@ export function LoginScreen({ auth, onDone }: { auth: AuthClient; onDone: () => 
     if (!email.trim() || !password) return setError('Preencha o e-mail e a senha.');
     void run(async () => {
       await auth.login(email, password);
+      writeLastEmail(email);
       onDone();
     });
   };
@@ -69,6 +87,7 @@ export function LoginScreen({ auth, onDone }: { auth: AuthClient; onDone: () => 
         {mode === 'login' && (
           <>
             <p className="muted small">Entre com o e-mail e a senha da sua conta. A escala fica guardada na sua conta e aparece igual em qualquer computador ou celular.</p>
+            <p className="muted small">Você só entra uma vez: este aparelho continua conectado até você clicar em "Sair da conta", em Ajustes.</p>
             <div className="field"><label htmlFor="login-email">E-mail</label><input id="login-email" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus /></div>
             <div className="field"><label htmlFor="login-senha">Senha</label><input id="login-senha" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} /></div>
             {error && <p className="error">{error}</p>}
