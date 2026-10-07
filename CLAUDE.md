@@ -28,7 +28,7 @@ npm run lint      # tsc --noEmit
 - Alertas nunca bloqueiam silenciosamente: mostrar como lista e como borda na célula. O único bloqueio é o drop fora do horário de contrato.
 - `seed.json` é dado do cliente: não alterar valores. O alerta conhecido (Sala 2 às 18h sem ASB) deve continuar aparecendo até o cliente responder.
 - Blocos de hora: 07→08 até 18→19 (12 blocos). Dias da semana: 0=dom ... 6=sáb. Almoço só entre 12h e 15h (padrão, ajustável).
-- Quadro: "Escala base" (modelo que se repete) e "Escala da semana" (segunda a sexta, por data; ajustes valem só no dia). A ficha mostra só o nome (e "apoio"). Soltar numa sala ocupada, ou estando em outra sala, entra como apoio sem perguntar.
+- Quadro: "Escala base" (modelo que se repete) e "Escala da semana" (segunda a sexta; o que se arrasta vale para a semana inteira por padrão, com "Só este dia" como exceção). A ficha mostra só o nome (e "apoio"). Soltar numa sala ocupada, ou estando em outra sala, entra como apoio sem perguntar.
 - Datas em ISO (`YYYY-MM-DD`), sem fuso horário (usar helpers de `src/domain/dates.ts`).
 - Commits pequenos por etapa. Rodar `npm test` e `npm run build` antes de cada commit.
 

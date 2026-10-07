@@ -76,11 +76,15 @@ export interface PeriodHolder {
   to: IsoDate;
 }
 
+export type TaskPeriod = 'manha' | 'tarde';
+
 export interface Task {
   id: Id;
   name: string;
   when: string;
   rule: string;
+  /** Período do dia em que a tarefa acontece (manhã ou tarde): a titular do rodízio precisa trabalhar nele. */
+  period?: TaskPeriod;
   /** Dias da semana em que a tarefa acontece. */
   days: number[];
   assignment: TaskMode;

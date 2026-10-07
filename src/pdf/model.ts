@@ -296,7 +296,9 @@ export function monthPdfModel(current: AppData, year: number, month: number, now
     .filter((t) => t.assignment.period === 'month')
     .map((t) => {
       const r = monthRotation(current, t, year, month);
-      return { task: t.name, when: t.when, holder: r?.monthTitularId ? asbName(data, r.monthTitularId) : '-' };
+      const partial = (r?.fixed ?? []).map((h) => `${asbName(data, h.asbId)} fixa de ${formatDayMonth(h.from)} a ${formatDayMonth(h.to)}`);
+      const titular = r?.monthTitularId ? asbName(data, r.monthTitularId) : '-';
+      return { task: t.name, when: t.when, holder: partial.length > 0 ? `${titular}; ${partial.join('; ')}` : titular };
     });
   const { roomNames, rows } = roomRows(data, day);
   const absences = absencesBetween(data, firstOfMonth(year, month), lastOfMonth(year, month))
@@ -398,6 +400,9 @@ export function dayPdfModel(current: AppData, date: IsoDate, now: Date = new Dat
     }),
     ...day.extraShifts.map((e) => `${asbName(data, e.asbId)} faz hora extra ${formatRange(e.start, e.end)}${e.note ? ` (${e.note})` : ''}.`),
     ...data.asbs.filter((a) => a.originalHours).map((a) => `${a.name} com horário trocado: ${formatRange(a.start, a.end)} (normal ${formatRange(a.originalHours!.start, a.originalHours!.end)})${a.originalHours!.note ? `, ${a.originalHours!.note}` : ''}.`),
+    ...(adjustedSlotCount(day.weekOverrides) > 0
+      ? [`Esta semana tem ${adjustedSlotCount(day.weekOverrides)} ajuste${adjustedSlotCount(day.weekOverrides) > 1 ? 's' : ''} em relação à escala base (valem de segunda a sexta).`]
+      : []),
     ...(adjustedSlotCount(day.overrides) > 0
       ? [`${adjustedSlotCount(day.overrides)} ajuste${adjustedSlotCount(day.overrides) > 1 ? 's' : ''} feito${adjustedSlotCount(day.overrides) > 1 ? 's' : ''} só para este dia.`]
       : []),

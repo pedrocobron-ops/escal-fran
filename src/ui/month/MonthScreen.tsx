@@ -96,7 +96,14 @@ export function MonthScreen() {
                 return (
                   <tr key={t.id}>
                     <td>{t.name}</td>
-                    <td>{r?.monthTitularId ? <span className="chip static" style={{ background: colors.get(r.monthTitularId) }}>{name(r.monthTitularId)}</span> : <span className="muted">sem ordem definida</span>}</td>
+                    <td>
+                      {r?.monthTitularId ? <span className="chip static" style={{ background: colors.get(r.monthTitularId) }}>{name(r.monthTitularId)}</span> : <span className="muted">sem ordem definida</span>}
+                      {(r?.fixed ?? []).map((h) => (
+                        <span key={h.asbId + h.from} className="small" style={{ marginLeft: 8 }}>
+                          <span className="chip static" style={{ background: colors.get(h.asbId) }}>{name(h.asbId)}</span> fixa de {formatDayMonth(h.from)} a {formatDayMonth(h.to)}
+                        </span>
+                      ))}
+                    </td>
                   </tr>
                 );
               })}

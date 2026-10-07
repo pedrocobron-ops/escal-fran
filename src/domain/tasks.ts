@@ -1,6 +1,6 @@
 // Responsável por tarefa numa data (5.3) e rodízios por mês (5.4).
 
-import type { AppData, EffectiveDay, Id, IsoDate, PeriodHolder, Person, Task, TaskMode } from './types';
+import type { AppData, EffectiveDay, Id, IsoDate, PeriodHolder, Person, Task, TaskMode, TaskPeriod } from './types';
 import { lastOfMonth, mod, monthsSince, todayIso, weekdayOf, weeksOfMonth, weeksSince, type MonthWeek } from './dates';
 import { absenceFor, isExternalSubstitute, isTeamSubstitute } from './absences';
 import { effectiveDay, isOpenOn } from './schedule';
@@ -36,6 +36,8 @@ export interface TaskResolution {
   noSubstitute?: boolean;
   /** Rodízio: titular está inativa mas continua na ordem. */
   titularInactive?: boolean;
+  /** Rodízio com período (manhã/tarde): o contrato da titular não passa por esse período. */
+  titularOffShift?: boolean;
   /** Explicação curta em português. */
   reason: string;
 }
@@ -111,6 +113,14 @@ export function resolveTask(current: AppData, taskNow: Task, date: IsoDate, day?
 }
 
 /** Responsável fixo que vale na data, se houver. */
+/** O contrato da ASB passa pelo período da tarefa? (manhã = começa antes do meio-dia; tarde = sai depois das 13h). Sem período, sempre sim. */
+export function worksInPeriod(data: Pick<AppData, 'asbs'>, asbId: Id, period: TaskPeriod | undefined): boolean {
+  if (!period) return true;
+  const asb = data.asbs.find((a) => a.id === asbId);
+  if (!asb) return true;
+  return period === 'manha' ? asb.start < 12 : asb.end > 13;
+}
+
 export function periodHolderOn(task: Task, date: IsoDate): PeriodHolder | undefined {
   return (task.holdersByPeriod ?? []).find((h) => h.from <= date && date <= h.to);
 }
@@ -171,13 +181,15 @@ function resolveByMode(data: AppData, task: Task, date: IsoDate, base: TaskResol
       const { substituteUnavailable, ...r } = rotationHolder(data, titularId, date);
       const label = a.period === 'week' ? 'da semana' : 'do mês';
       let reason = `${asbName(data, titularId)} é a titular ${label}.`;
+      const titularOffShift = !r.titularInactive && !worksInPeriod(data, titularId, task.period);
       if (r.titularInactive) reason += ' Está inativa: ajuste a ordem do rodízio.';
+      else if (titularOffShift) reason += ` Não trabalha ${task.period === 'manha' ? 'de manhã' : 'à tarde'}: ajuste a ordem do rodízio.`;
       else if (r.titularAbsent) {
         reason += r.noSubstitute
           ? ` Está ausente, sem substituta${substituteUnavailable ? ` (${substituteUnavailable})` : ''}.`
           : ` Está ausente, cobre ${r.holders.map((p) => personName(data, p)).join(' e ')}.`;
       }
-      return { ...base, ...r, titularId, reason };
+      return { ...base, ...r, titularId, titularOffShift: titularOffShift || undefined, reason };
     }
     case 'fixed': {
       const holders: Person[] = a.asbIds
@@ -209,6 +221,8 @@ export interface MonthRotation {
   weeks: RotationWeekEntry[];
   /** Rodízio mensal: titular do mês. */
   monthTitularId?: Id;
+  /** Rodízio mensal: responsáveis fixas que cobrem só parte do mês (recortadas ao mês), além da titular. */
+  fixed?: Array<{ asbId: Id; from: IsoDate; to: IsoDate }>;
 }
 
 /**
@@ -227,10 +241,18 @@ export function monthRotation(current: AppData, task: Task, year: number, month:
   const taskAsOf = (date: IsoDate) => dataForDate(current, date < today ? date : today).tasks.find((x) => x.id === task.id) ?? task;
   if (task.assignment.period === 'month') {
     const first = weeks[0]?.days[0] ?? `${year}-${String(month).padStart(2, '0')}-01`;
-    const a = asOf(lastOfMonth(year, month));
-    // Responsável fixa no período vale acima do rodízio.
-    const fixed = periodHolderOn(taskAsOf(first), first);
-    return a ? { taskId: task.id, period: 'month', weeks: [], monthTitularId: fixed?.asbId ?? rotationTitular(a, first) } : undefined;
+    const last = lastOfMonth(year, month);
+    const a = asOf(last);
+    if (!a) return undefined;
+    // Responsável fixa no período vale acima do rodízio: o mês inteiro vira a titular;
+    // só parte do mês aparece ao lado da titular, com as datas.
+    const active = new Set(current.asbs.filter((x) => x.active).map((x) => x.id));
+    const fixed = (taskAsOf(first).holdersByPeriod ?? [])
+      .filter((h) => h.from <= last && h.to >= first && active.has(h.asbId))
+      .map((h) => ({ asbId: h.asbId, from: h.from < first ? first : h.from, to: h.to > last ? last : h.to }))
+      .sort((x, y) => x.from.localeCompare(y.from));
+    const whole = fixed.find((h) => h.from === first && h.to === last);
+    return { taskId: task.id, period: 'month', weeks: [], monthTitularId: whole?.asbId ?? rotationTitular(a, first), fixed: whole ? [] : fixed };
   }
   const entries: RotationWeekEntry[] = [];
   for (const week of weeks) {

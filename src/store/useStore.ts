@@ -461,6 +461,12 @@ export function copyWeekOverrides(draft: AppData, fromMonday: IsoDate, toMonday:
   return src.length;
 }
 
+/** Tira os ajustes "só este dia" de uma ASB nessas horas (quando uma instrução da semana passa por cima). */
+export function dropDayOverrides(draft: AppData, date: IsoDate, asbId: Id, hours: number[]): void {
+  const set = new Set(hours);
+  draft.dayOverrides = (draft.dayOverrides ?? []).filter((o) => !(o.date === date && o.asbId === asbId && set.has(o.hour)));
+}
+
 export function clearDayOverrides(draft: AppData, date: IsoDate): void {
   draft.dayOverrides = (draft.dayOverrides ?? []).filter((o) => o.date !== date);
   draft.extraShifts = (draft.extraShifts ?? []).filter((e) => !(e.fromBoard && e.date === date));

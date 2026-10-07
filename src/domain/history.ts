@@ -35,7 +35,7 @@ export function dataForDate(data: AppData, date: IsoDate | ''): AppData {
   if (changes.length === 0) return out;
   const asbs = out.asbs.map((a) => {
     const c = changes.find((x) => x.asbId === a.id);
-    return c ? { ...a, start: c.start, end: c.end, originalHours: { start: a.start, end: a.end, note: c.note } } : a;
+    return c && a.active ? { ...a, start: c.start, end: c.end, originalHours: { start: a.start, end: a.end, note: c.note } } : a;
   });
   return out === data ? { ...data, asbs } : { ...out, asbs };
 }

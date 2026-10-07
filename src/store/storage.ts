@@ -1,7 +1,7 @@
 // Camada de persistência isolada. Hoje: localStorage. Amanhã: Supabase, trocando
 // só o adapter, sem mexer no resto do app.
 
-import type { AppData } from '../domain';
+import type { AppData, Asb, Id, TaskPeriod } from '../domain';
 import { isValidIso, todayIso } from '../domain';
 import seedJson from '../data/seed.json';
 
@@ -170,6 +170,10 @@ export function repairBackup(json: string): RepairReport {
     if (t.assignment.mode === 'rotation' && !isIso(t.assignment.startDate)) {
       t.assignment.startDate = todayIso();
       removed.push(`data de início do rodízio "${t.name}" era inválida (passou a ser hoje)`);
+    }
+    if ((t as { period?: unknown }).period !== undefined && !['manha', 'tarde'].includes(String((t as { period?: unknown }).period))) {
+      delete (t as { period?: unknown }).period;
+      removed.push(`período inválido da tarefa "${t.name}"`);
     }
     if (t.holdersByPeriod !== undefined) {
       const list = isArray(t.holdersByPeriod) ? t.holdersByPeriod : [];
@@ -385,6 +389,44 @@ export function applyDataMigrations(out: AppData): void {
       });
     }
     applied.add('planilha-protese');
+  }
+  // 07/10/2026 (revisão): a planilha de prótese tem período (manhã/tarde) e a ordem padrão
+  // só com quem trabalha nesse turno (Andrea sai às 13h, Nicélia entra às 13h). Uma ordem já
+  // mudada pela pessoa não é mexida.
+  if (!applied.has('planilha-protese-periodo')) {
+    const active = out.asbs.filter((a) => a.active);
+    const idOf = (name: string) => out.asbs.find((a) => a.name.toLowerCase() === name)?.id;
+    const defaultOrder = (firstName: string) => {
+      const first = idOf(firstName);
+      const ids = active.map((a) => a.id);
+      return first ? [first, ...ids.filter((id) => id !== first)] : ids;
+    };
+    const shiftOrder = (firstName: string, period: TaskPeriod, avoid: Id[]) => {
+      const works = (a: Asb) => (period === 'manha' ? a.start < 12 : a.end > 13);
+      const first = idOf(firstName);
+      const rest = active.filter((a) => works(a) && a.id !== first).map((a) => a.id);
+      // Tenta não repetir, no mesmo mês, a titular da outra planilha (desloca a lista até não bater).
+      const order = first ? [first, ...rest] : rest;
+      if (avoid.length === order.length && rest.length > 1) {
+        for (let shift = 0; shift < rest.length; shift++) {
+          const cand = first ? [first, ...rest.slice(shift), ...rest.slice(0, shift)] : rest;
+          if (cand.every((id, i) => id !== avoid[i])) return cand;
+        }
+      }
+      return order;
+    };
+    const fix = (id: string, firstName: string, period: TaskPeriod, avoid: Id[]) => {
+      const t = out.tasks.find((x) => x.id === id);
+      if (!t) return [] as Id[];
+      if (!t.period) t.period = period;
+      if (t.assignment.mode === 'rotation' && t.assignment.order.join(',') === defaultOrder(firstName).join(',')) {
+        t.assignment.order = shiftOrder(firstName, period, avoid);
+      }
+      return t.assignment.mode === 'rotation' ? t.assignment.order : [];
+    };
+    const manha = fix('task-planilha-protese-manha', 'pâmela', 'manha', []);
+    fix('task-planilha-protese-tarde', 'nicélia', 'tarde', manha);
+    applied.add('planilha-protese-periodo');
   }
   out.applied = [...applied];
 }

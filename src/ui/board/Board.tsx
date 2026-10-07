@@ -20,9 +20,7 @@ import {
   HOURS, WEEKDAY_SHORT, addDays, allowedHours, dataForDate, analyze, baseDay, canAssign, canAssignOn, canLunchAt, dentistsAt, lunchWindowOf, effectiveDay, formatBlock, formatDate,
   formatDayMonth, adjustedSlotCount, findAsbAnywhere, formatHour, formatRange, isExternalSubstitute, isTeamSubstitute, isValidIso, mondayOf, proteseAlerts, todayIso, validHours, weekdayOf,
 } from '../../domain';
-import {
-  addExtraHour, boardExtrasOn, clearDayOverrides, clearSchedule, clearWeekOverrides, copyWeekOverrides, hasDayOverrides, removeSlotAt, setDaySlots, setWeekSlots, useData, useStore, weekEntriesAt, weekPlanAt, type CellTarget,
-} from '../../store/useStore';
+import { addExtraHour, boardExtrasOn, clearDayOverrides, clearSchedule, clearWeekOverrides, copyWeekOverrides, dropDayOverrides, hasDayOverrides, removeSlotAt, setDaySlots, setWeekSlots, type CellTarget, useData, useStore, weekEntriesAt, weekPlanAt } from '../../store/useStore';
 import { colorMap, tint } from '../colors';
 import { useConfirm } from '../common/Modal';
 import { DateInput } from '../common/fields';
@@ -269,7 +267,14 @@ export function Board() {
       if (!isDay) return (d: AppData) => placeInBase(d, p);
       // Mexer numa ficha posta pelo app (substituta ou remanejada) é decisão manual: o app não a recoloca.
       const hold = !!orig && isAutomatic(orig.asbId, orig.hour, orig.kind, orig.roomId);
-      if (scopeFor(orig) === 'week') return (d: AppData) => placeInWeek(d, monday, p, (h) => weekEntries(asbId, h), hold);
+      if (scopeFor(orig) === 'week') {
+        return (d: AppData) => {
+          // O que a pessoa manda valer para a semana, estando neste dia, vence um ajuste
+          // "só este dia" dela nessas horas (senão nada mudaria na tela e ela não saberia por quê).
+          dropDayOverrides(d, date, asbId, orig ? [...hours, orig.hour] : hours);
+          placeInWeek(d, monday, p, (h) => weekEntries(asbId, h), hold);
+        };
+      }
       return (d: AppData) => placeInDay(d, date, p, (h) => entriesAt(asbId, h), hold);
     },
     [isDay, date, monday, entriesAt, weekEntries, isAutomatic, scopeFor],
@@ -322,10 +327,12 @@ export function Board() {
       const sameHour = hours.includes(orig.hour);
       steps.push(placement(asb.id, hours, column, kind === 'apoio' && sameHour ? 'add' : 'move', orig, kind === 'apoio'));
     }
+    const dayHours = weekScope ? hours.filter((h) => (current.dayOverrides ?? []).some((o) => o.date === date && o.asbId === asb.id && o.hour === h)) : [];
     apply((d) => {
       if (extraHour !== undefined) addExtraHour(d, asb.id, date, extraHour);
       for (const step of steps) step(d);
     });
+    if (dayHours.length > 0) notify(`${asb.name} tinha um ajuste "só este dia" às ${dayHours.map(formatHour).join(', ')} em ${formatDayMonth(date)}; ele saiu e vale o da semana.`);
   };
 
   /**
@@ -341,7 +348,7 @@ export function Board() {
       choices: [
         {
           label: 'Registrar hora extra e colocar',
-          hint: 'Aparece em Ausências, extras e trocas e entra no total do mês para pagamento. Sai junto se você limpar os ajustes do dia.',
+          hint: 'Aparece em Ausências, extras e trocas de horário e entra no total do mês para pagamento. Sai junto se você limpar os ajustes do dia.',
           primary: true,
           onChoose: () => {
             setChoice(null);
@@ -407,7 +414,7 @@ export function Board() {
       const n = adjustedSlotCount((current.weekOverrides ?? []).filter((o) => o.week === monday));
       const ok = await confirm({
         title: `Voltar a semana de ${formatDayMonth(weekDays[0])} a ${formatDayMonth(weekDays[weekDays.length - 1])} à escala base?`,
-        message: `Os ${n} ajustes feitos para esta semana saem e os dias voltam a seguir a escala base (ausências, folgas e ajustes de um dia só continuam). Dá para desfazer no botão Desfazer, no topo.`,
+        message: `${n === 1 ? 'O ajuste feito para esta semana sai' : `Os ${n} ajustes feitos para esta semana saem`} e os dias voltam a seguir a escala base (ausências, folgas e ajustes de um dia só continuam). Dá para desfazer no botão Desfazer, no topo.`,
         confirmLabel: 'Voltar à escala base',
         danger: true,
       });
@@ -572,7 +579,7 @@ export function Board() {
                   activeAsb={activeAsb}
                   allowedAt={allowedAt}
                   lunchOk={canLunchAt(data, hour)}
-                  extraOk={isDay && !readOnly}
+                  extraOk={isDay && !readOnly && scope === 'day'}
                   colors={colors}
                   asbById={asbById}
                   readOnly={readOnly}
@@ -781,12 +788,12 @@ function Palette({ ref, day, asbs, colors, readOnly, isDay, scope, active, alert
             : active?.type === 'slot'
               ? 'Solte aqui para remover.'
               : isDay
-                ? `O que você arrastar aqui vale ${scope === 'week' ? 'de segunda a sexta desta semana' : 'só para este dia'}. Da lista para uma sala: acrescenta (ela continua onde estava); sala ocupada vira apoio. Para apoio, CME, almoxarifado ou almoço ela sai de onde estava. Fora do horário dela, pergunta se é hora extra.`
+                ? `O que você arrastar aqui vale ${scope === 'week' ? 'de segunda a sexta desta semana' : 'só para este dia'}. Da lista para uma sala: acrescenta (ela continua onde estava); sala ocupada vira apoio. Para apoio, CME, almoxarifado ou almoço ela sai de onde estava. ${scope === 'week' ? 'Fora do horário dela: escolha "Só este dia" para registrar hora extra.' : 'Fora do horário dela, pergunta se é hora extra.'}`
                 : 'Arraste uma ficha para o quadro. Da lista para uma sala: acrescenta (ela continua onde estava); sala ocupada vira apoio. Para apoio, CME, almoxarifado ou almoço ela sai de onde estava. Ficha do quadro: move, exceto para sala ocupada, onde vira apoio e fica também onde estava.'}
         </p>
         {!readOnly && (
           <p className="muted hint-touch">
-            Segure a ficha meio segundo e arraste.{isDay ? ' Fora do horário dela, pergunta se é hora extra.' : ''} Solte na paleta para tirar.
+            Segure a ficha meio segundo e arraste.{isDay ? (scope === 'week' ? ' Fora do horário dela: escolha "Só este dia" para registrar hora extra.' : ' Fora do horário dela, pergunta se é hora extra.') : ''} Solte na paleta para tirar.
           </p>
         )}
         {active?.type === 'slot' && !readOnly && <span className="palette-drop-badge">Solte aqui para tirar a ficha</span>}
@@ -875,23 +882,29 @@ function DaySummary({ day, data, weekCount, scope }: { day: EffectiveDay; data: 
 function TodayHint({ current, onOpen }: { current: AppData; onOpen: () => void }) {
   const today = todayIso();
   const day = useMemo(() => effectiveDay(current, today), [current, today]);
-  const futureAdjusted = useMemo(
+  const futureDays = useMemo(
     () => new Set((current.dayOverrides ?? []).filter((o) => o.date > today).map((o) => o.date)).size,
     [current.dayOverrides, today],
+  );
+  const futureWeeks = useMemo(
+    () => new Set((current.weekOverrides ?? []).filter((o) => o.week > mondayOf(today)).map((o) => o.week)).size,
+    [current.weekOverrides, today],
   );
   const parts: string[] = [];
   if (day.open) {
     if (day.absences.length > 0) parts.push(`${day.absences.length} ausência${day.absences.length > 1 ? 's' : ''}`);
     if (day.dentistsOff.length > 0) parts.push(`${day.dentistsOff.length} dentista${day.dentistsOff.length > 1 ? 's' : ''} de folga`);
     if (day.extraShifts.length > 0) parts.push(`${day.extraShifts.length} hora${day.extraShifts.length > 1 ? 's' : ''} extra${day.extraShifts.length > 1 ? 's' : ''}`);
-    if (day.overrides.length > 0) parts.push('ajustes feitos para hoje');
+    if (day.weekOverrides.length > 0) parts.push('ajustes feitos para esta semana');
+    if (day.overrides.length > 0) parts.push('ajustes feitos só para hoje');
   }
-  if (parts.length === 0 && futureAdjusted === 0) return null;
+  const future = [futureWeeks > 0 ? `${futureWeeks} semana${futureWeeks > 1 ? 's' : ''}` : '', futureDays > 0 ? `${futureDays} dia${futureDays > 1 ? 's' : ''}` : ''].filter(Boolean).join(' e ');
+  if (parts.length === 0 && !future) return null;
   return (
     <p className="note" style={{ marginTop: -4 }}>
       {parts.length > 0 ? `Hoje (${formatDate(today)}) tem ${parts.join(', ')}. ` : ''}
       Esta é a escala base, que se repete toda semana; o que muda em cada data aparece na escala da semana.
-      {futureAdjusted > 0 ? ` Há ajustes feitos para ${futureAdjusted} dia${futureAdjusted > 1 ? 's' : ''} à frente.` : ''}{' '}
+      {future ? ` Há ajustes feitos para ${future} à frente.` : ''}{' '}
       <button className="btn sm" onClick={onOpen}>Ver hoje na escala da semana</button>
     </p>
   );

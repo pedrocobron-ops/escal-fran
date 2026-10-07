@@ -251,7 +251,8 @@ a { color: var(--accent); }
 .empty-state { text-align: center; padding: 48px 16px; }
 
 @media (max-width: 900px) {
-  :root { --cell-min: 100px; --hour-w: 44px; }
+  :root { --cell-min: 120px; --hour-w: 44px; }
+  .chip { padding: 3px 6px; }
   .board .hour { padding: 4px; overflow: hidden; }
   .hour-full { display: none; }
   .hour-short { display: inline; }

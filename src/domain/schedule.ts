@@ -442,7 +442,9 @@ export function analyze(current: AppData, day: EffectiveDay): Alert[] {
     if (!asb) continue;
     const mine = day.slots.filter((s) => s.who.type === 'asb' && s.who.asbId === asbId);
     const lw = lunchWindowOf(data);
-    if (asb.lunch && !mine.some((s) => s.kind === 'almoco')) {
+    // Quem sai antes da janela (ex.: troca de horário 07h–12h) não tem como almoçar no CEO: sem alerta.
+    const canLunchToday = hoursBetween(asb.start, asb.end).some((h) => canLunchAt(data, h));
+    if (asb.lunch && canLunchToday && !mine.some((s) => s.kind === 'almoco')) {
       alerts.push({
         level: 'critico',
         code: 'sem-almoco',

@@ -5,7 +5,7 @@ export type Route = 'quadro' | 'tarefas' | 'ausencias' | 'equipe' | 'mes' | 'aju
 export const ROUTES: Array<{ id: Route; label: string }> = [
   { id: 'quadro', label: 'Quadro' },
   { id: 'tarefas', label: 'Tarefas e rodízios' },
-  { id: 'ausencias', label: 'Ausências, extras e trocas' },
+  { id: 'ausencias', label: 'Ausências, extras e trocas de horário' },
   { id: 'equipe', label: 'Equipe e salas' },
   { id: 'mes', label: 'Visão do mês' },
   { id: 'ajustes', label: 'Ajustes' },
