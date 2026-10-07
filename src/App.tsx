@@ -108,9 +108,6 @@ export function App() {
   if (auth && !session) {
     return (
       <ConfirmProvider>
-        <header className="app-header">
-          <span className="brand">Escala CEO</span>
-        </header>
         <LoginScreen auth={auth} onDone={() => window.location.reload()} />
       </ConfirmProvider>
     );

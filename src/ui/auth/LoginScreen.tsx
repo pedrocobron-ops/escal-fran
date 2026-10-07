@@ -83,23 +83,35 @@ export function LoginScreen({ auth, onDone }: { auth: AuthClient; onDone: () => 
   return (
     <div className="login-wrap">
       <form className="login-card card" onSubmit={mode === 'login' ? login : mode === 'recover' ? recover : mode === 'new-password' ? changePassword : (e) => e.preventDefault()}>
-        <h1 style={{ marginTop: 0 }}>Escala CEO</h1>
+        <div className="login-brand">
+          <span className="login-mark" aria-hidden>
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="5" width="18" height="16" rx="3" />
+              <path d="M3 10h18M8 3v4M16 3v4" />
+              <path d="M8 15l2.5 2.5L16 13" />
+            </svg>
+          </span>
+          <div>
+            <h1>Escala CEO</h1>
+            <p className="sub">Escala das ASBs e dentistas</p>
+          </div>
+        </div>
         {mode === 'login' && (
           <>
-            <p className="muted small">Entre com o e-mail e a senha da sua conta. A escala fica guardada na sua conta e aparece igual em qualquer computador ou celular.</p>
-            <p className="muted small">Você só entra uma vez: este aparelho continua conectado até você clicar em "Sair da conta", em Ajustes.</p>
-            <div className="field"><label htmlFor="login-email">E-mail</label><input id="login-email" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus /></div>
-            <div className="field"><label htmlFor="login-senha">Senha</label><input id="login-senha" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} /></div>
+            <p className="lead">Entre com o e-mail e a senha da sua conta. A escala fica guardada nela e aparece igual em qualquer computador ou celular.</p>
+            <div className="field"><label htmlFor="login-email">E-mail</label><input id="login-email" type="email" autoComplete="username" placeholder="seu@email.com" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus={!email} /></div>
+            <div className="field"><label htmlFor="login-senha">Senha</label><input id="login-senha" type="password" autoComplete="current-password" placeholder="Sua senha" value={password} onChange={(e) => setPassword(e.target.value)} autoFocus={!!email} /></div>
             {error && <p className="error">{error}</p>}
-            <div className="modal-actions" style={{ justifyContent: 'space-between' }}>
+            <button type="submit" className="btn primary" disabled={busy}>{busy ? 'Entrando...' : 'Entrar'}</button>
+            <div className="login-links">
               <button type="button" className="btn link" onClick={() => { setMode('recover'); setError(null); }}>Esqueci a senha</button>
-              <button type="submit" className="btn primary" disabled={busy}>{busy ? 'Entrando...' : 'Entrar'}</button>
             </div>
+            <p className="login-foot">Você só entra uma vez: este aparelho continua conectado até você clicar em "Sair da conta", em Ajustes.</p>
           </>
         )}
         {mode === 'recover' && (
           <>
-            <p className="small">Digite o e-mail da conta. Você recebe um link para criar uma senha nova.</p>
+            <p className="lead">Digite o e-mail da conta. Você recebe um link para criar uma senha nova.</p>
             <div className="field"><label htmlFor="rec-email">E-mail</label><input id="rec-email" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus /></div>
             {error && <p className="error">{error}</p>}
             <div className="modal-actions" style={{ justifyContent: 'space-between' }}>
@@ -119,7 +131,7 @@ export function LoginScreen({ auth, onDone }: { auth: AuthClient; onDone: () => 
         )}
         {mode === 'new-password' && (
           <>
-            <p className="small">Crie a senha nova{email ? ` para ${email}` : ''}.</p>
+            <p className="lead">Crie a senha nova{email ? ` para ${email}` : ''}.</p>
             <div className="field"><label htmlFor="np1">Senha nova</label><input id="np1" type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} autoFocus /></div>
             <div className="field"><label htmlFor="np2">Repita a senha</label><input id="np2" type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} /></div>
             {error && <p className="error">{error}</p>}
