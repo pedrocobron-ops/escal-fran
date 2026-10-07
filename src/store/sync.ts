@@ -157,7 +157,11 @@ export class SupabaseRemote {
 
   /** Grava e devolve o updated_at novo. */
   async put(data: AppData, opts: { keepalive?: boolean; timeoutMs?: number } = {}): Promise<string> {
-    const v = await this.rpc<string>('escala_put', { p_codigo: this.cfg.code, p_data: data }, { timeoutMs: opts.timeoutMs ?? 15000, keepalive: opts.keepalive });
+    // keepalive (ao fechar a página) só vale para corpos pequenos (limite do navegador, 64 KB);
+    // acima disso o envio normal é tentado, e, se não der tempo, a cópia local fica marcada
+    // como pendente e sobe na próxima abertura.
+    const keepalive = opts.keepalive && JSON.stringify(data).length < 60000;
+    const v = await this.rpc<string>('escala_put', { p_codigo: this.cfg.code, p_data: data }, { timeoutMs: opts.timeoutMs ?? 15000, keepalive });
     if (typeof v !== 'string') throw new SyncError('A nuvem não confirmou a gravação.');
     return v;
   }
