@@ -329,3 +329,5 @@ a { color: var(--accent); }
 .undo-redo { display: inline-flex; gap: 4px; }
 .hint-touch { display: none; }
 .plain-list li.current { border-color: var(--accent); background: var(--accent-soft); }
+.alerts-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.alerts.collapsed { padding: 8px 14px; }
