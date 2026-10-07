@@ -58,6 +58,8 @@ export interface MonthPdfModel {
   absences: AbsenceRow[];
   dentistAbsences: Array<{ dentist: string; period: string; reason: string }>;
   extras: Array<{ asb: string; date: string; hours: string; note: string }>;
+  /** Trocas de horário do mês. */
+  shiftChanges: Array<{ asb: string; period: string; hours: string; note: string }>;
   /** Total de horas extras (fora do contrato) por ASB no mês. */
   extraTotals: Array<{ asb: string; hours: number }>;
   generatedAt: string;
@@ -234,7 +236,7 @@ export function asbRows(data: AppData, day: EffectiveDay = baseDay(data)): AsbRo
       const afternoon = HOURS.filter((h) => h >= AFTERNOON_START);
       return {
         name: asb.name,
-        contract: formatRange(asb.start, asb.end) + day.extraShifts.filter((e) => e.asbId === asb.id).map((e) => ` + extra ${formatRange(e.start, e.end)}`).join(''),
+        contract: formatRange(asb.start, asb.end) + (asb.originalHours ? ' (trocado)' : '') + day.extraShifts.filter((e) => e.asbId === asb.id).map((e) => ` + extra ${formatRange(e.start, e.end)}`).join(''),
         morning: describePeriod(data, day, asb, morning),
         lunch: lunch ? formatRange(lunch.hour, lunch.hour + 1) : asb.lunch ? 'sem bloco' : 'não sai',
         afternoon: describePeriod(data, day, asb, afternoon),
@@ -313,6 +315,10 @@ export function monthPdfModel(current: AppData, year: number, month: number, now
     .sort((a, b) => a.date.localeCompare(b.date) || a.start - b.start)
     .map((e) => ({ asb: asbName(data, e.asbId), date: `${WEEKDAY_SHORT[weekdayOf(e.date)]}, ${formatDate(e.date)}`, hours: formatRange(e.start, e.end), note: e.note ?? '' }));
   const extraTotals = extraTotalsByAsb(current, first, last);
+  const shiftChanges = (current.shiftChanges ?? [])
+    .filter((c) => c.from <= last && c.to >= first)
+    .sort((a, b) => a.from.localeCompare(b.from))
+    .map((c) => ({ asb: asbName(current, c.asbId), period: c.from === c.to ? formatDate(c.from) : `${formatDate(c.from)} a ${formatDate(c.to)}`, hours: formatRange(c.start, c.end), note: c.note ?? '' }));
   return {
     title: 'Escala mensal de trabalho - CEO',
     monthLabel: formatMonth(year, month),
@@ -330,6 +336,7 @@ export function monthPdfModel(current: AppData, year: number, month: number, now
     dentistAbsences,
     extras,
     extraTotals,
+    shiftChanges,
     generatedAt: `Gerado em ${formatDate(todayIso(now))} às ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
   };
 }
@@ -390,6 +397,7 @@ export function dayPdfModel(current: AppData, date: IsoDate, now: Date = new Dat
       return `${d.name} de folga${abs ? ` (${abs.reason})` : ''}, ${data.rooms.find((r) => r.id === d.roomId)?.name ?? ''} ${formatRange(d.start, d.end)}.`;
     }),
     ...day.extraShifts.map((e) => `${asbName(data, e.asbId)} faz hora extra ${formatRange(e.start, e.end)}${e.note ? ` (${e.note})` : ''}.`),
+    ...data.asbs.filter((a) => a.originalHours).map((a) => `${a.name} com horário trocado: ${formatRange(a.start, a.end)} (normal ${formatRange(a.originalHours!.start, a.originalHours!.end)})${a.originalHours!.note ? `, ${a.originalHours!.note}` : ''}.`),
     ...(adjustedSlotCount(day.overrides) > 0
       ? [`${adjustedSlotCount(day.overrides)} ajuste${adjustedSlotCount(day.overrides) > 1 ? 's' : ''} feito${adjustedSlotCount(day.overrides) > 1 ? 's' : ''} só para este dia.`]
       : []),

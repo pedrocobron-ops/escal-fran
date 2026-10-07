@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { Absence, AbsenceReason, AppData, DentistAbsence, ExtraShift, IsoDate } from '../../domain';
+import type { Absence, AbsenceReason, AppData, DentistAbsence, ExtraShift, IsoDate, ShiftChange } from '../../domain';
 import {
   ABSENCE_REASONS, WEEKDAY_SHORT, absenceFor, absencesBetween, addDays, analyze, coverageSuggestions, dataForDate, dentistAbsencesBetween,
   dentistWorksOn, dentistsAt, effectiveDay, extraNeededToCover, findAsbAnywhere, findDentistAnywhere, firstOfMonth, formatDate, formatDayMonth, formatHour, formatRange, groupHours, isBetween,
   isExternalSubstitute, isOpenOn, isReasonablePeriod, isTeamSubstitute, lastOfMonth, mondayOf, outsideContract, overlappingAbsences,
-  overlappingDentistAbsences, overlappingExtras, stillUncovered, todayIso, validExtraShiftsBetween, weekdayOf,
+  overlappingDentistAbsences, overlappingExtras, overlappingShiftChanges, shiftChangesBetween, stillUncovered, todayIso, validExtraShiftsBetween, weekdayOf,
 } from '../../domain';
 import { newId, useData, useStore } from '../../store/useStore';
 import { colorMap } from '../colors';
@@ -13,7 +13,7 @@ import { Field, HourSelect } from '../common/fields';
 import { MonthPicker, currentYearMonth, type YearMonth } from '../common/MonthPicker';
 import { ChoiceDialog, type Choice } from '../board/RangeDialog';
 
-type Tab = 'asb' | 'extra' | 'dentista';
+type Tab = 'asb' | 'extra' | 'troca' | 'dentista';
 
 function period(from: string, to: string): string {
   return from === to ? formatDate(from) : `${formatDate(from)} a ${formatDate(to)}`;
@@ -36,6 +36,7 @@ export function AbsencesScreen() {
   const [editAbs, setEditAbs] = useState<Absence | 'new' | null>(null);
   const [editExtra, setEditExtra] = useState<ExtraShift | 'new' | null>(null);
   const [editDent, setEditDent] = useState<DentistAbsence | 'new' | null>(null);
+  const [editShift, setEditShift] = useState<ShiftChange | 'new' | null>(null);
   const colors = useMemo(() => colorMap(data.asbs), [data.asbs]);
   const asbName = (id: string) => findAsbAnywhere(data, id)?.name ?? '?';
   const dentName = (id: string) => findDentistAnywhere(data, id)?.name ?? '?';
@@ -104,6 +105,10 @@ export function AbsencesScreen() {
     const ok = await confirm({ title: 'Remover hora extra?', message: <>{asbName(e.asbId)}, {formatDate(e.date)}, {formatRange(e.start, e.end)}.</>, confirmLabel: 'Remover', danger: true });
     if (ok) apply((d) => { d.extraShifts = (d.extraShifts ?? []).filter((x) => x.id !== e.id); });
   };
+  const removeShift = async (c: ShiftChange) => {
+    const ok = await confirm({ title: 'Remover troca de horário?', message: <>{asbName(c.asbId)}, {period(c.from, c.to)}, {formatRange(c.start, c.end)}. Volta ao horário normal do contrato.</>, confirmLabel: 'Remover', danger: true });
+    if (ok) apply((d) => { d.shiftChanges = (d.shiftChanges ?? []).filter((x) => x.id !== c.id); });
+  };
   const removeDent = async (a: DentistAbsence) => {
     if (a.from < today) {
       setEnding({ kind: 'dent', item: a });
@@ -116,22 +121,24 @@ export function AbsencesScreen() {
   const absences = [...data.absences].filter((a) => inMonth(a.from, a.to)).sort((a, b) => b.from.localeCompare(a.from));
   const extras = [...(data.extraShifts ?? [])].filter((e) => inMonth(e.date, e.date)).sort((a, b) => b.date.localeCompare(a.date) || a.start - b.start);
   const dentAbs = [...(data.dentistAbsences ?? [])].filter((a) => inMonth(a.from, a.to)).sort((a, b) => b.from.localeCompare(a.from));
-  const countAll = { asb: data.absences.length, extra: (data.extraShifts ?? []).length, dentista: (data.dentistAbsences ?? []).length };
+  const shifts = [...(data.shiftChanges ?? [])].filter((c) => inMonth(c.from, c.to)).sort((a, b) => b.from.localeCompare(a.from));
+  const countAll = { asb: data.absences.length, extra: (data.extraShifts ?? []).length, troca: (data.shiftChanges ?? []).length, dentista: (data.dentistAbsences ?? []).length };
 
-  const newLabel = tab === 'asb' ? 'Nova ausência de ASB' : tab === 'extra' ? 'Nova hora extra' : 'Nova folga de dentista';
-  const onNew = () => (tab === 'asb' ? setEditAbs('new') : tab === 'extra' ? setEditExtra('new') : setEditDent('new'));
+  const newLabel = tab === 'asb' ? 'Nova ausência de ASB' : tab === 'extra' ? 'Nova hora extra' : tab === 'troca' ? 'Nova troca de horário' : 'Nova folga de dentista';
+  const onNew = () => (tab === 'asb' ? setEditAbs('new') : tab === 'extra' ? setEditExtra('new') : tab === 'troca' ? setEditShift('new') : setEditDent('new'));
   const scope = allMonths ? 'todos os meses' : `${formatDayMonth(first)} a ${formatDayMonth(last)}`;
 
   return (
     <div>
       <div className="toolbar">
-        <h1>Ausências e extras</h1>
+        <h1>Ausências, extras e trocas de horário</h1>
         <span className="spacer" />
         <button className="btn primary" onClick={onNew}>{newLabel}</button>
       </div>
       <div className="tabs" role="tablist">
         <button role="tab" className={tab === 'asb' ? 'active' : ''} onClick={() => setTab('asb')}>Folgas e faltas de ASB ({countAll.asb})</button>
         <button role="tab" className={tab === 'extra' ? 'active' : ''} onClick={() => setTab('extra')}>Horas extras ({countAll.extra})</button>
+        <button role="tab" className={tab === 'troca' ? 'active' : ''} onClick={() => setTab('troca')}>Trocas de horário ({countAll.troca})</button>
         <button role="tab" className={tab === 'dentista' ? 'active' : ''} onClick={() => setTab('dentista')}>Folgas de dentista ({countAll.dentista})</button>
       </div>
       <div className="board-layout">
@@ -141,7 +148,7 @@ export function AbsencesScreen() {
           </div>
           <MonthCalendar ym={ym} data={data} colors={colors} />
           <p className="muted small" style={{ marginTop: 6 }}>
-            No calendário: ASB ausente na cor dela, <strong>+ nome</strong> em verde para hora extra, dentista de folga em cinza escuro.
+            No calendário: ASB ausente na cor dela, <strong>+ nome</strong> em verde para hora extra, <strong>⇄ nome</strong> em roxo para troca de horário, dentista de folga em cinza escuro.
             Dia com borda vermelha tem sala com dentista e sem ASB. Toque num dia para abrir o Quadro nessa data, com horários e motivos.
           </p>
         </div>
@@ -211,6 +218,35 @@ export function AbsencesScreen() {
               </div>
             )
           )}
+          {tab === 'troca' && (
+            shifts.length === 0 ? (
+              <p className="card muted">Nenhuma troca de horário {allMonths ? 'cadastrada' : 'neste mês'}. Use quando uma ASB trabalha em outro horário em alguns dias (ex.: entra às 07h e sai às 16h em vez de 09h–18h). Não conta como hora extra: nesses dias o horário dela passa a ser o novo.</p>
+            ) : (
+              <div className="table-wrap">
+                <table className="table responsive">
+                  <thead><tr><th>ASB</th><th>Período</th><th>Horário nesses dias</th><th>Horário normal</th><th>Obs.</th><th></th></tr></thead>
+                  <tbody>
+                    {shifts.map((c) => {
+                      const asb = findAsbAnywhere(data, c.asbId);
+                      return (
+                        <tr key={c.id}>
+                          <td><span className="chip static" style={{ background: colors.get(c.asbId) ?? '#555' }}>{asbName(c.asbId)}</span></td>
+                          <td className="mono" data-label="Período">{period(c.from, c.to)}</td>
+                          <td className="mono" data-label="Horário nesses dias"><strong>{formatRange(c.start, c.end)}</strong></td>
+                          <td className="mono" data-label="Horário normal">{asb ? formatRange(asb.start, asb.end) : '?'}</td>
+                          <td data-label="Obs.">{c.note ?? ''}</td>
+                          <td className="actions">
+                            <button className="btn sm" onClick={() => setEditShift(c)}>Editar</button>{' '}
+                            <button className="btn sm danger" onClick={() => removeShift(c)}>Remover</button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )
+          )}
           {tab === 'dentista' && (
             dentAbs.length === 0 ? (
               <p className="card muted">Nenhuma folga de dentista {allMonths ? 'cadastrada' : 'neste mês'}. Quando um dentista folga, a sala dele fica sem atendimento e o app remaneja a ASB dessa sala para outra que esteja sem ASB.</p>
@@ -266,6 +302,23 @@ export function AbsencesScreen() {
             });
             if (list[0]) showMonthOf(list[0].date);
             setEditExtra(null);
+          }}
+        />
+      )}
+      {editShift && (
+        <ShiftChangeForm
+          change={editShift === 'new' ? undefined : editShift}
+          onClose={() => setEditShift(null)}
+          onSave={(c) => {
+            apply((d) => {
+              const list = d.shiftChanges ?? [];
+              const i = list.findIndex((x) => x.id === c.id);
+              if (i >= 0) list[i] = c;
+              else list.push(c);
+              d.shiftChanges = list;
+            });
+            showMonthOf(c.from);
+            setEditShift(null);
           }}
         />
       )}
@@ -339,6 +392,7 @@ export function MonthCalendar({ ym, data, colors }: { ym: YearMonth; data: AppDa
   const monthAbs = absencesBetween(data, first, last);
   const monthDent = dentistAbsencesBetween(data, first, last);
   const monthExtra = validExtraShiftsBetween(data, first, last);
+  const monthShift = shiftChangesBetween(data, first, last);
   const problems = useMemo(() => problemDays(data, first, last), [data, first, last]);
   const asbName = (id: string) => findAsbAnywhere(data, id)?.name ?? '?';
   const dentName = (id: string) => findDentistAnywhere(data, id)?.name ?? '?';
@@ -369,6 +423,9 @@ export function MonthCalendar({ ym, data, colors }: { ym: YearMonth; data: AppDa
             ))}
             {inMonth && monthExtra.filter((e) => e.date === iso).map((e) => (
               <span key={e.id} className="abs extra" title={`${asbName(e.asbId)}: hora extra ${formatRange(e.start, e.end)}`}>+ {asbName(e.asbId)}</span>
+            ))}
+            {inMonth && monthShift.filter((c) => isBetween(iso, c.from, c.to) && !absenceFor(data, c.asbId, iso)).map((c) => (
+              <span key={c.id} className="abs shift" title={`${asbName(c.asbId)}: horário trocado, ${formatRange(c.start, c.end)}`}>⇄ {asbName(c.asbId)}</span>
             ))}
             {inMonth && monthDent.filter((a) => isBetween(iso, a.from, a.to)).map((a) => (
               <span key={a.id} className="abs dentist" title={`${dentName(a.dentistId)}: ${a.reason}`}>{dentName(a.dentistId)}</span>
@@ -625,9 +682,11 @@ function ExtraForm({ extra, onClose, onSave }: { extra?: ExtraShift; onClose: ()
   const initialPreset: ExtraPreset = extra ? 'outro' : firstAsb && presetHours('antes', firstAsb) ? 'antes' : 'depois';
   const initialHours = extra ? [extra.start, extra.end] : (firstAsb && presetHours(initialPreset, firstAsb)) || [17, 18];
   const [asbId, setAsbId] = useState(extra?.asbId ?? firstAsb?.id ?? '');
-  const asb = data.asbs.find((a) => a.id === asbId);
   const [from, setFrom] = useState(extra?.date ?? todayIso());
   const [to, setTo] = useState(extra?.date ?? todayIso());
+  // Contrato que vale na primeira data (uma troca de horário muda o horário normal nesses dias).
+  const asbOn = (d: IsoDate) => (/^\d{4}-\d{2}-\d{2}$/.test(d) ? dataForDate(data, d).asbs.find((a) => a.id === asbId) : undefined) ?? data.asbs.find((a) => a.id === asbId);
+  const asb = asbOn(from);
   const [preset, setPreset] = useState<ExtraPreset>(initialPreset);
   const [start, setStart] = useState(initialHours[0]);
   const [end, setEnd] = useState(initialHours[1]);
@@ -669,7 +728,9 @@ function ExtraForm({ extra, onClose, onSave }: { extra?: ExtraShift; onClose: ()
     }
     const list: ExtraShift[] = [];
     usableDates.forEach((date, i) => {
-      parts.forEach(([a, b], j) => {
+      // Em cada dia, só o que fica fora do contrato daquele dia conta como extra.
+      const dayParts = date === from ? parts : outsideContract(start, end, asbOn(date) ?? asb);
+      dayParts.forEach(([a, b], j) => {
         list.push({
           id: extra && i === 0 && j === 0 ? extra.id : newId('hx'),
           asbId,
@@ -684,7 +745,7 @@ function ExtraForm({ extra, onClose, onSave }: { extra?: ExtraShift; onClose: ()
     onSave(list, extra?.id);
   };
 
-  const contractLabel = asb ? formatRange(asb.start, asb.end) : '';
+  const contractLabel = asb ? formatRange(asb.start, asb.end) + (asb.originalHours ? ' (trocado nesse dia)' : '') : '';
   const extraLabel = parts.map(([a, b]) => formatRange(a, b)).join(' e ');
 
   return (
@@ -720,6 +781,70 @@ function ExtraForm({ extra, onClose, onSave }: { extra?: ExtraShift; onClose: ()
       )}
       {!extra && usableDates.length > 1 && <p className="muted small">Vai criar em {usableDates.length} dias: {usableDates.map((d) => `${WEEKDAY_SHORT[weekdayOf(d)]} ${formatDayMonth(d)}`).join(', ')}.</p>}
       {absentDates.length > 0 && usableDates.length > 0 && <div className="note warn">Pula {absentDates.map(formatDayMonth).join(', ')}: {asb?.name} está ausente.</div>}
+      {error && <p className="error">{error}</p>}
+      <div className="modal-actions">
+        <button className="btn" onClick={onClose}>Cancelar</button>
+        <button className="btn primary" onClick={submit}>Salvar</button>
+      </div>
+    </Modal>
+  );
+}
+
+function ShiftChangeForm({ change, onClose, onSave }: { change?: ShiftChange; onClose: () => void; onSave: (c: ShiftChange) => void }) {
+  const data = useData();
+  const options = data.asbs.filter((a) => a.active || a.id === change?.asbId);
+  const [asbId, setAsbId] = useState(change?.asbId ?? options[0]?.id ?? '');
+  const asb = data.asbs.find((a) => a.id === asbId);
+  const tomorrow = addDays(todayIso(), 1);
+  const [from, setFrom] = useState(change?.from ?? tomorrow);
+  const [to, setTo] = useState(change?.to ?? tomorrow);
+  const [start, setStart] = useState(change?.start ?? 7);
+  const [end, setEnd] = useState(change?.end ?? 16);
+  const [note, setNote] = useState(change?.note ?? '');
+  const [error, setError] = useState<string | null>(null);
+
+  const reasonable = isReasonablePeriod(from, to);
+  const days = reasonable ? openDaysIn(data, from, to) : [];
+  const absentDays = asb ? days.filter((d) => absenceFor(data, asb.id, d)) : [];
+  const sameAsContract = !!asb && start === asb.start && end === asb.end;
+  const hours = end - start;
+  const contractHours = asb ? asb.end - asb.start : 0;
+
+  const submit = () => {
+    if (!asbId || !asb) return setError('Escolha a ASB.');
+    if (!from || !to || to < from || !reasonable) return setError('Confira as datas.');
+    if (end <= start) return setError('A saída precisa ser depois da entrada.');
+    if (sameAsContract) return setError(`Esse já é o horário normal de ${asb.name} (${formatRange(asb.start, asb.end)}).`);
+    if (days.length === 0) return setError('Nenhum dia de funcionamento nesse período.');
+    const clashes = overlappingShiftChanges(data, asb.id, from, to, change?.id);
+    if (clashes.length > 0) return setError(`${asb.name} já tem troca de horário nesse período: ${clashes.map((c) => `${period(c.from, c.to)} (${formatRange(c.start, c.end)})`).join(', ')}. Edite a existente.`);
+    onSave({ id: change?.id ?? newId('tr'), asbId, from, to, start, end, note: note.trim() || undefined });
+  };
+
+  return (
+    <Modal title={change ? 'Editar troca de horário' : 'Nova troca de horário'} onClose={onClose} keepOnBackdrop>
+      <Field label="ASB">
+        <select value={asbId} onChange={(e) => setAsbId(e.target.value)} autoFocus>
+          {options.map((a) => <option key={a.id} value={a.id}>{a.name} (normal {formatRange(a.start, a.end)}){a.active ? '' : ' (inativa)'}</option>)}
+        </select>
+      </Field>
+      <div className="field-row">
+        <Field label="De"><input type="date" value={from} onChange={(e) => { setFrom(e.target.value); if (e.target.value && e.target.value > to) setTo(e.target.value); }} /></Field>
+        <Field label="Até"><input type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)} /></Field>
+      </div>
+      <div className="field-row">
+        <Field label="Entra às"><HourSelect value={start} onChange={setStart} max={18} /></Field>
+        <Field label="Sai às"><HourSelect value={end} onChange={setEnd} min={8} /></Field>
+      </div>
+      <Field label="Observação (opcional)"><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="ex.: consulta médica à tarde" /></Field>
+      {asb && (
+        <p className="muted small">
+          Nesses dias {asb.name} trabalha {formatRange(start, end)} em vez de {formatRange(asb.start, asb.end)}
+          {hours !== contractHours && end > start ? ` (${hours}h em vez de ${contractHours}h)` : ''}. Não conta como hora extra; o quadro, os alertas e o PDF passam a usar o novo horário.
+        </p>
+      )}
+      {days.length > 1 && <p className="muted small">Vale em {days.length} dias de funcionamento: {days.map((d) => `${WEEKDAY_SHORT[weekdayOf(d)]} ${formatDayMonth(d)}`).join(', ')}.</p>}
+      {absentDays.length > 0 && <div className="note warn">{asb?.name} está ausente em {absentDays.map(formatDayMonth).join(', ')}: nesses dias a ausência vale, não a troca.</div>}
       {error && <p className="error">{error}</p>}
       <div className="modal-actions">
         <button className="btn" onClick={onClose}>Cancelar</button>

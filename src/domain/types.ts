@@ -37,6 +37,8 @@ export interface Asb {
   active: boolean;
   /** Cor da ficha no quadro. Opcional: quando ausente, a interface deriva uma. */
   color?: string;
+  /** Só em cópias datadas (dataForDate): horário normal quando há troca de horário na data. */
+  originalHours?: { start: number; end: number; note?: string };
 }
 
 export type SlotKind = 'sala' | 'apoio' | 'recepcao' | 'cme' | 'almox' | 'almoco';
@@ -142,6 +144,31 @@ export interface ClosedDate {
 /** `livre` só existe em ajuste de dia: "nesse dia, nessa hora, a ASB não tem atribuição". */
 export type DaySlotKind = SlotKind | 'livre';
 
+/**
+ * Ajuste de uma semana (segunda a sexta): substitui o que a ASB faria nessa hora na
+ * escala base em todos os dias daquela semana. `week` é a segunda-feira da semana.
+ */
+export interface WeekSlot {
+  id: Id;
+  week: IsoDate;
+  asbId: Id;
+  hour: number;
+  kind: DaySlotKind;
+  roomId?: Id;
+  hold?: boolean;
+}
+
+/** Troca de horário: em certas datas a ASB trabalha em outro horário, sem hora extra. */
+export interface ShiftChange {
+  id: Id;
+  asbId: Id;
+  from: IsoDate;
+  to: IsoDate;
+  start: number;
+  end: number;
+  note?: string;
+}
+
 /** Ajuste de um dia específico: substitui o que a ASB faria nessa hora na escala base. */
 export interface DaySlot {
   id: Id;
@@ -206,6 +233,12 @@ export interface AppData {
   closedDates?: ClosedDate[];
   /** Janela do almoço (padrão 12h–15h). */
   lunchWindow?: LunchWindow;
+  /** Ajustes por semana (escala da semana). */
+  weekOverrides?: WeekSlot[];
+  /** Trocas de horário por data. */
+  shiftChanges?: ShiftChange[];
+  /** Migrações de dados já aplicadas (ex.: tarefas novas pedidas pelo cliente). */
+  applied?: string[];
   /** Primeiro dia em que o app registrou a escala neste navegador. */
   historySince?: IsoDate;
 }
@@ -231,7 +264,7 @@ export type Person = { type: 'asb'; asbId: Id } | { type: 'external'; name: stri
 
 /** base: da escala base; substitute: herdado de uma ausente; external: pessoa de fora;
  *  override: ajuste feito para esse dia; auto: remanejada pelo app (dentista de folga ou hora extra). */
-export type SlotOrigin = 'base' | 'substitute' | 'external' | 'override' | 'auto';
+export type SlotOrigin = 'base' | 'substitute' | 'external' | 'week' | 'override' | 'auto';
 
 export interface EffectiveSlot {
   hour: number;
@@ -280,6 +313,8 @@ export interface EffectiveDay {
   dentistAbsences: DentistAbsence[];
   extraShifts: ExtraShift[];
   overrides: DaySlot[];
+  /** Ajustes da semana que valem nesta data. */
+  weekOverrides: WeekSlot[];
 }
 
 // ---- Alertas (seção 5.2) ----

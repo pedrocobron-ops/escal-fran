@@ -142,8 +142,8 @@ export function MonthPdf({ m }: { m: MonthPdfModel }) {
           </View>
         )}
 
-        <View wrap={false}>
-          <Text style={s.h2}>4. Regras fixas</Text>
+        <View>
+          <Text style={s.h2} minPresenceAhead={40}>4. Regras fixas</Text>
           {m.rules.map((r, i) => (
             <View key={i} style={s.bullet}>
               <Text style={s.bulletDot}>•</Text>
@@ -194,9 +194,31 @@ export function MonthPdf({ m }: { m: MonthPdfModel }) {
           </View>
         )}
 
+        {m.shiftChanges.length > 0 && (
+          <View>
+            <Text style={s.h2} minPresenceAhead={40}>{5 + (m.absences.length > 0 ? 1 : 0) + (m.dentistAbsences.length > 0 ? 1 : 0)}. Trocas de horário do mês</Text>
+            <View style={s.table}>
+              <View style={[s.row, s.head]} fixed>
+                <Text style={s.cell}>ASB</Text>
+                <Text style={s.cell}>Período</Text>
+                <Text style={s.cell}>Horário nesses dias</Text>
+                <Text style={s.cell}>Obs.</Text>
+              </View>
+              {m.shiftChanges.map((c, i) => (
+                <View style={s.row} key={i} wrap={false}>
+                  <Text style={[s.cell, s.bold]}>{c.asb}</Text>
+                  <Text style={s.cell}>{c.period}</Text>
+                  <Text style={s.cell}>{c.hours}</Text>
+                  <Text style={s.cell}>{c.note}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
+
         {m.extras.length > 0 && (
           <View>
-            <Text style={s.h2} minPresenceAhead={40}>{5 + (m.absences.length > 0 ? 1 : 0) + (m.dentistAbsences.length > 0 ? 1 : 0)}. Horas extras do mês</Text>
+            <Text style={s.h2} minPresenceAhead={40}>{5 + (m.absences.length > 0 ? 1 : 0) + (m.dentistAbsences.length > 0 ? 1 : 0) + (m.shiftChanges.length > 0 ? 1 : 0)}. Horas extras do mês</Text>
             <View style={s.table}>
               <View style={[s.row, s.head]} fixed>
                 <Text style={s.cell}>ASB</Text>

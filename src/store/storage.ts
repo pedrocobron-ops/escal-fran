@@ -39,7 +39,7 @@ function interpret(raw: string | null): LoadResult {
 }
 
 export function seedData(): AppData {
-  return structuredClone(seedJson) as AppData;
+  return migrate(structuredClone(seedJson) as AppData);
 }
 
 export class LocalStorageAdapter implements StorageAdapter {
@@ -189,6 +189,9 @@ export function repairBackup(json: string): RepairReport {
   if (r.dayOverrides !== undefined) r.dayOverrides = keep('dayOverrides', 'ajuste de dia', (x) => isStr(x.id) && isStr(x.asbId) && isIso(x.date) && isNum(x.hour) && isStr(x.kind) && [...SLOT_KINDS, 'livre'].includes(x.kind));
   if (r.history !== undefined) r.history = keep('history', 'registro de histórico', (x) => isIso(x.until));
   if (r.closedDates !== undefined) r.closedDates = keep('closedDates', 'dia fechado', (x) => isIso(x.date) && (x.note === undefined || isStr(x.note)));
+  if (r.weekOverrides !== undefined) r.weekOverrides = keep('weekOverrides', 'ajuste de semana', (x) => isStr(x.id) && isStr(x.asbId) && isIso(x.week) && isNum(x.hour) && isStr(x.kind) && [...SLOT_KINDS, 'livre'].includes(x.kind));
+  if (r.shiftChanges !== undefined) r.shiftChanges = keep('shiftChanges', 'troca de horário', (x) => isStr(x.id) && isStr(x.asbId) && isIso(x.from) && isIso(x.to) && (x.to as string) >= (x.from as string) && isNum(x.start) && isNum(x.end) && (x.end as number) > (x.start as number));
+  if (r.applied !== undefined && !(isArray(r.applied) && (r.applied as unknown[]).every((x) => typeof x === 'string'))) delete r.applied;
   if (r.historySince !== undefined && !isIso(r.historySince)) {
     delete r.historySince;
     removed.push('data de início do histórico era inválida (passou a ser hoje)');
@@ -305,6 +308,15 @@ export function parseBackup(json: string): AppData {
     need(isArray(raw.protese), 'O campo "protese" precisa ser uma lista.');
     (raw.protese as unknown[]).forEach((p, i) => need(isRecord(p) && isStr(p.dentistId) && isStr(p.asbId) && isIso(p.since), `Registro da Prótese ${i + 1} com data inválida.`));
   }
+  if (raw.weekOverrides !== undefined) {
+    need(isArray(raw.weekOverrides), 'O campo "weekOverrides" precisa ser uma lista.');
+    (raw.weekOverrides as unknown[]).forEach((o, i) => need(isRecord(o) && isStr(o.id) && isStr(o.asbId) && isIso(o.week) && isNum(o.hour) && isStr(o.kind) && [...SLOT_KINDS, 'livre'].includes(o.kind), `Ajuste de semana ${i + 1} incompleto.`));
+  }
+  if (raw.shiftChanges !== undefined) {
+    need(isArray(raw.shiftChanges), 'O campo "shiftChanges" precisa ser uma lista.');
+    (raw.shiftChanges as unknown[]).forEach((c, i) => need(isRecord(c) && isStr(c.id) && isStr(c.asbId) && isIso(c.from) && isIso(c.to) && (c.to as string) >= (c.from as string) && isNum(c.start) && isNum(c.end) && (c.end as number) > (c.start as number), `Troca de horário ${i + 1} incompleta ou com data inválida.`));
+  }
+  if (raw.applied !== undefined) need(isArray(raw.applied) && (raw.applied as unknown[]).every((x) => typeof x === 'string'), 'O campo "applied" precisa ser uma lista de textos.');
   if (raw.closedDates !== undefined) {
     need(isArray(raw.closedDates), 'O campo "closedDates" precisa ser uma lista.');
     (raw.closedDates as unknown[]).forEach((c, i) => need(isRecord(c) && isIso(c.date) && (c.note === undefined || isStr(c.note)), `Dia fechado ${i + 1} com data inválida.`));
@@ -329,6 +341,50 @@ export function migrate(data: AppData): AppData {
   if (!Array.isArray(out.dayOverrides)) out.dayOverrides = [];
   if (!Array.isArray(out.history)) out.history = [];
   if (!Array.isArray(out.closedDates)) out.closedDates = [];
+  if (!Array.isArray(out.weekOverrides)) out.weekOverrides = [];
+  if (!Array.isArray(out.shiftChanges)) out.shiftChanges = [];
+  if (!Array.isArray(out.applied)) out.applied = [];
   out.asbs = out.asbs.map((a) => ({ ...a, active: a.active !== false, lunch: a.lunch === true }));
+  applyDataMigrations(out);
   return out;
+}
+
+/**
+ * Mudanças de conteúdo pedidas pelo cliente depois que a escala já estava em uso.
+ * Cada uma roda uma vez por escala (fica anotada em `applied`), para a pessoa poder
+ * apagar ou mudar o que foi criado sem o app recriar.
+ */
+export function applyDataMigrations(out: AppData): void {
+  const applied = new Set(out.applied ?? []);
+  // 07/10/2026: planilha de prótese como rodízio mensal, manhã e tarde (áudio do cliente).
+  if (!applied.has('planilha-protese')) {
+    const has = (name: string) => out.tasks.some((t) => t.name.toLowerCase().startsWith(name));
+    const active = out.asbs.filter((a) => a.active).map((a) => a.id);
+    const order = (firstName: string) => {
+      const first = out.asbs.find((a) => a.name.toLowerCase() === firstName)?.id;
+      return first ? [first, ...active.filter((id) => id !== first)] : active;
+    };
+    if (!has('planilha de prótese (manhã)')) {
+      out.tasks.push({
+        id: 'task-planilha-protese-manha',
+        name: 'Planilha de prótese (manhã)',
+        when: 'Mensal, manhã',
+        rule: 'Rodízio mensal: quem está no mês cuida da planilha de prótese no período da manhã.',
+        days: [1, 2, 3, 4, 5],
+        assignment: { mode: 'rotation', period: 'month', order: order('pâmela'), startDate: '2026-10-01' },
+      });
+    }
+    if (!has('planilha de prótese (tarde)')) {
+      out.tasks.push({
+        id: 'task-planilha-protese-tarde',
+        name: 'Planilha de prótese (tarde)',
+        when: 'Mensal, tarde',
+        rule: 'Rodízio mensal: quem está no mês cuida da planilha de prótese no período da tarde.',
+        days: [1, 2, 3, 4, 5],
+        assignment: { mode: 'rotation', period: 'month', order: order('nicélia'), startDate: '2026-10-01' },
+      });
+    }
+    applied.add('planilha-protese');
+  }
+  out.applied = [...applied];
 }

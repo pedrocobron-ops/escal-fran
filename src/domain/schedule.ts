@@ -4,7 +4,7 @@ import type {
   Absence, Alert, AppData, Asb, Dentist, EffectiveDay, EffectiveSlot, ExtraShift, Id, IsoDate, LunchWindow, Person, Slot, SlotOrigin, UncoveredSlot,
 } from './types';
 import { HOURS, SLOT_KIND_LABEL } from './types';
-import { diffDays, weekdayOf } from './dates';
+import { diffDays, mondayOf, weekdayOf } from './dates';
 import { absencesOn, dentistAbsencesOn, extraShiftsOn, isExternalSubstitute, isTeamSubstitute } from './absences';
 import { formatHour, formatRange, groupHours, hoursBetween } from './time';
 import { dataForDate } from './history';
@@ -117,17 +117,30 @@ export function effectiveDay(current: AppData, date: IsoDate): EffectiveDay {
   const dentistsOff = scheduled.filter((d) => offIds.has(d.id));
   const isExtra = (asbId: Id, hour: number) => inExtraShift(extraShifts, asbId, hour);
 
-  // 1. O que cada ASB faria no dia: escala base com os ajustes do dia por cima.
-  //    Vale também para quem está ausente (a substituta cobre o que foi combinado para o dia).
+  // 1. O que cada ASB faria no dia: escala base, com os ajustes da semana por cima e,
+  //    por cima deles, os ajustes do dia. Vale também para quem está ausente (a substituta
+  //    cobre o que foi combinado para o dia).
+  const monday = mondayOf(date);
+  const weekOverrides = (data.weekOverrides ?? []).filter((o) => o.week === monday && activeIds.has(o.asbId));
   const overrides = (data.dayOverrides ?? []).filter((o) => o.date === date && activeIds.has(o.asbId));
   const key = (asbId: Id, hour: number) => `${asbId}@${hour}`;
   const overriddenKeys = new Set(overrides.map((o) => key(o.asbId, o.hour)));
-  const holdKeys = new Set(overrides.filter((o) => o.hold).map((o) => key(o.asbId, o.hour)));
-  const placedKeys = new Set(overrides.filter((o) => o.kind !== 'livre').map((o) => key(o.asbId, o.hour)));
+  const weekKeys = new Set(weekOverrides.map((o) => key(o.asbId, o.hour)));
+  const holdKeys = new Set([...overrides.filter((o) => o.hold), ...weekOverrides.filter((o) => o.hold && !overriddenKeys.has(key(o.asbId, o.hour)))].map((o) => key(o.asbId, o.hour)));
+  const placedKeys = new Set([...overrides, ...weekOverrides.filter((o) => !overriddenKeys.has(key(o.asbId, o.hour)))].filter((o) => o.kind !== 'livre').map((o) => key(o.asbId, o.hour)));
   const planned: Array<Slot & { origin: SlotOrigin }> = [];
   for (const s of data.base.slots) {
-    if (!activeIds.has(s.asbId) || overriddenKeys.has(key(s.asbId, s.hour))) continue;
+    if (!activeIds.has(s.asbId) || overriddenKeys.has(key(s.asbId, s.hour)) || weekKeys.has(key(s.asbId, s.hour))) continue;
+    // Fora do contrato do dia (ex.: troca de horário) o bloco da base não vale.
+    const asb = asbById.get(s.asbId);
+    if (!asb || !canAssignOn(asb, s.hour, absentIds.has(s.asbId) ? [] : extraShifts)) continue;
     planned.push({ ...s, origin: 'base' });
+  }
+  for (const o of weekOverrides) {
+    if (o.kind === 'livre' || overriddenKeys.has(key(o.asbId, o.hour))) continue;
+    const asb = asbById.get(o.asbId);
+    if (!asb || !canAssignOn(asb, o.hour, absentIds.has(o.asbId) ? [] : extraShifts)) continue;
+    planned.push({ asbId: o.asbId, hour: o.hour, kind: o.kind, roomId: o.roomId, origin: 'week' });
   }
   for (const o of overrides) {
     if (o.kind === 'livre') continue;
@@ -280,7 +293,7 @@ export function effectiveDay(current: AppData, date: IsoDate): EffectiveDay {
   if (!open) {
     // CEO fechado: ninguém escalado. Os ajustes continuam listados para poderem ser limpos.
     return {
-      date, weekday, open, closedNote, slots: [], absences, uncovered: [], presentAsbIds: [], dentists: [], dentistsOff: [],
+      date, weekday, open, closedNote, slots: [], absences, uncovered: [], presentAsbIds: [], dentists: [], dentistsOff: [], weekOverrides: [],
       dentistAbsences, extraShifts: [], overrides,
     };
   }
@@ -299,6 +312,7 @@ export function effectiveDay(current: AppData, date: IsoDate): EffectiveDay {
     dentistAbsences,
     extraShifts,
     overrides,
+    weekOverrides,
   };
 }
 
@@ -323,6 +337,7 @@ export function baseDay(data: AppData): EffectiveDay {
     dentistAbsences: [],
     extraShifts: [],
     overrides: [],
+    weekOverrides: [],
   };
 }
 

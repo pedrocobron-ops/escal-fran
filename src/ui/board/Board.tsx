@@ -21,7 +21,7 @@ import {
   formatDayMonth, adjustedSlotCount, findAsbAnywhere, formatHour, formatRange, isExternalSubstitute, isTeamSubstitute, isValidIso, mondayOf, proteseAlerts, todayIso, validHours, weekdayOf,
 } from '../../domain';
 import {
-  addExtraHour, boardExtrasOn, clearDayOverrides, clearSchedule, hasDayOverrides, removeSlotAt, setDaySlots, useData, useStore, type CellTarget,
+  addExtraHour, boardExtrasOn, clearDayOverrides, clearSchedule, clearWeekOverrides, copyWeekOverrides, hasDayOverrides, removeSlotAt, setDaySlots, setWeekSlots, useData, useStore, weekEntriesAt, weekPlanAt, type CellTarget,
 } from '../../store/useStore';
 import { colorMap, tint } from '../colors';
 import { useConfirm } from '../common/Modal';
@@ -31,14 +31,17 @@ import { AlertsPanel } from './AlertsPanel';
 import { Chip, ChipOverlay, type DragItem } from './Chip';
 import { ChoiceDialog, RangeDialog, type Choice } from './RangeDialog';
 import { cellKey, columnKeyOf, columnsFor, type Column } from './model';
-import { isRoomEntry, placeInBase, placeInDay, roomDropKind, sameTarget, type PlaceMode } from './placement';
+import { isRoomEntry, placeInBase, placeInDay, placeInWeek, roomDropKind, sameTarget, type PlaceMode } from './placement';
 
 type Mode = 'base' | 'week';
 type SlotItem = DragItem & { type: 'slot' };
 
-// Modo e data ficam lembrados enquanto a página está aberta (ao trocar de tela e voltar).
+// Modo, data e alcance ficam lembrados enquanto a página está aberta (ao trocar de tela e voltar).
 let lastMode: Mode = 'week';
 let lastDate: IsoDate | null = null;
+/** O que se arrasta na escala da semana vale para a semana inteira (pedido do cliente) ou só para o dia. */
+type Scope = 'week' | 'day';
+let lastScope: Scope = 'week';
 
 /** Dias da semana (segunda em diante) em que o CEO abre, com as datas da semana de `date`. */
 function weekDaysOf(data: Pick<AppData, 'openDays'>, date: IsoDate): IsoDate[] {
@@ -151,6 +154,9 @@ export function Board() {
   const setDate = (d: IsoDate) => { lastDate = d; setDateState(d); };
   useEffect(() => { lastMode = initial.mode; lastDate = initial.date; }, [initial]);
   const [rangeMode, setRangeMode] = useState(false);
+  const [scope, setScopeState] = useState<Scope>(lastScope);
+  const setScope = (s: Scope) => { lastScope = s; setScopeState(s); };
+  const monday = useMemo(() => mondayOf(date), [date]);
   const [active, setActive] = useState<DragItem | null>(null);
   const [pending, setPending] = useState<PendingRange | null>(null);
   const [choice, setChoice] = useState<PendingChoice | null>(null);
@@ -229,7 +235,7 @@ export function Board() {
     useSensor(KeyboardSensor),
   );
 
-  /** O que a ASB faz nessa hora hoje (escala da semana), como alvos de célula. */
+  /** O que a ASB faz nessa hora neste dia, como alvos de célula. */
   const entriesAt = useCallback(
     (asbId: string, hour: number): CellTarget[] =>
       day.slots
@@ -237,6 +243,16 @@ export function Board() {
         .map((s) => ({ kind: s.kind, roomId: s.roomId })),
     [day.slots],
   );
+  /** O que a ASB faz nessa hora no plano da semana (base com os ajustes da semana, sem ausências). */
+  const weekEntries = useCallback((asbId: string, hour: number): CellTarget[] => weekEntriesAt(data, monday, asbId, hour), [data, monday]);
+  /** A ficha veio de algo que só vale neste dia (ajuste do dia, cobertura ou remanejamento do app)? */
+  const dayOnlyChip = useCallback(
+    (orig: SlotItem) =>
+      day.slots.some((s) => s.hour === orig.hour && s.who.type === 'asb' && s.who.asbId === orig.asbId && s.kind === orig.kind && (s.roomId ?? '') === (orig.roomId ?? '') && s.origin !== 'base' && s.origin !== 'week'),
+    [day.slots],
+  );
+  /** Alcance de uma mudança: a semana inteira, a não ser que seja "só este dia" ou uma ficha que só existe neste dia. */
+  const scopeFor = useCallback((orig?: SlotItem): Scope => (isDay && scope === 'week' && !(orig && dayOnlyChip(orig)) ? 'week' : 'day'), [isDay, scope, dayOnlyChip]);
 
   /** A ficha foi posta pelo app (substituta ou remanejamento)? Tirá-la vira "não usar para cobrir aqui". */
   const isAutomatic = useCallback(
@@ -253,9 +269,10 @@ export function Board() {
       if (!isDay) return (d: AppData) => placeInBase(d, p);
       // Mexer numa ficha posta pelo app (substituta ou remanejada) é decisão manual: o app não a recoloca.
       const hold = !!orig && isAutomatic(orig.asbId, orig.hour, orig.kind, orig.roomId);
+      if (scopeFor(orig) === 'week') return (d: AppData) => placeInWeek(d, monday, p, (h) => weekEntries(asbId, h), hold);
       return (d: AppData) => placeInDay(d, date, p, (h) => entriesAt(asbId, h), hold);
     },
-    [isDay, date, entriesAt, isAutomatic],
+    [isDay, date, monday, entriesAt, weekEntries, isAutomatic, scopeFor],
   );
 
   const removeChip = useCallback(
@@ -266,9 +283,13 @@ export function Board() {
       }
       const t: CellTarget = { kind, roomId };
       const hold = isAutomatic(asbId, hour, kind, roomId);
+      if (scopeFor({ type: 'slot', asbId, hour, kind, roomId }) === 'week') {
+        apply((d) => setWeekSlots(d, monday, asbId, [hour], weekEntries(asbId, hour).filter((e) => !sameTarget(e, t)), { hold }));
+        return;
+      }
       apply((d) => setDaySlots(d, date, asbId, [hour], entriesAt(asbId, hour).filter((e) => !sameTarget(e, t)), { hold }));
     },
-    [apply, isDay, date, entriesAt, isAutomatic],
+    [apply, isDay, date, monday, entriesAt, weekEntries, isAutomatic, scopeFor],
   );
 
   /**
@@ -284,10 +305,13 @@ export function Board() {
    */
   const decide = (asb: Asb, hours: number[], column: Column, orig?: SlotItem, extraHour?: number) => {
     const target = targetOf(column);
+    const weekScope = scopeFor(orig) === 'week';
     const roomHasAsbAt = (h: number) =>
-      day.slots.some((x) => x.kind === 'sala' && x.roomId === target.roomId && x.hour === h && !(x.who.type === 'asb' && x.who.asbId === asb.id));
+      weekScope
+        ? weekPlanAt(data, monday, h).some((x) => x.kind === 'sala' && x.roomId === target.roomId && x.asbId !== asb.id)
+        : day.slots.some((x) => x.kind === 'sala' && x.roomId === target.roomId && x.hour === h && !(x.who.type === 'asb' && x.who.asbId === asb.id));
     const inAnotherRoomAt = (h: number) =>
-      entriesAt(asb.id, h).some((x) => isRoomEntry(x) && x.roomId !== target.roomId && !(orig && h === orig.hour && sameTarget(x, { kind: orig.kind, roomId: orig.roomId })));
+      (weekScope ? weekEntries(asb.id, h) : entriesAt(asb.id, h)).some((x) => isRoomEntry(x) && x.roomId !== target.roomId && !(orig && h === orig.hour && sameTarget(x, { kind: orig.kind, roomId: orig.roomId })));
     const steps: Array<(d: AppData) => void> = [];
     if (target.kind !== 'sala') {
       steps.push(placement(asb.id, hours, column, 'replace', orig));
@@ -317,7 +341,7 @@ export function Board() {
       choices: [
         {
           label: 'Registrar hora extra e colocar',
-          hint: 'Aparece em Ausências e extras e entra no total do mês para pagamento. Sai junto se você limpar os ajustes do dia.',
+          hint: 'Aparece em Ausências, extras e trocas e entra no total do mês para pagamento. Sai junto se você limpar os ajustes do dia.',
           primary: true,
           onChoose: () => {
             setChoice(null);
@@ -347,7 +371,8 @@ export function Board() {
       return;
     }
     if (!allowedAt(asb, over.hour)) {
-      if (isDay && HOURS.includes(over.hour) && over.column.kind !== 'almoco') askExtra(asb, over.column, over.hour, orig);
+      if (isDay && HOURS.includes(over.hour) && over.column.kind !== 'almoco' && scopeFor(orig) === 'week') notify(`Hora extra é de um dia só: escolha "Só este dia" e solte de novo para registrar a hora extra de ${asb.name} às ${formatHour(over.hour)}.`);
+      else if (isDay && HOURS.includes(over.hour) && over.column.kind !== 'almoco') askExtra(asb, over.column, over.hour, orig);
       else notify(`${asb.name} trabalha ${formatRange(asb.start, asb.end)}: às ${formatHour(over.hour)} ela não está no CEO${isDay ? '' : ' (na escala da semana dá para registrar hora extra)'}.`);
       return;
     }
@@ -378,6 +403,17 @@ export function Board() {
   };
 
   const onClear = async () => {
+    if (isDay && scope === 'week' && !readOnly) {
+      const n = adjustedSlotCount((current.weekOverrides ?? []).filter((o) => o.week === monday));
+      const ok = await confirm({
+        title: `Voltar a semana de ${formatDayMonth(weekDays[0])} a ${formatDayMonth(weekDays[weekDays.length - 1])} à escala base?`,
+        message: `Os ${n} ajustes feitos para esta semana saem e os dias voltam a seguir a escala base (ausências, folgas e ajustes de um dia só continuam). Dá para desfazer no botão Desfazer, no topo.`,
+        confirmLabel: 'Voltar à escala base',
+        danger: true,
+      });
+      if (ok) apply((d) => clearWeekOverrides(d, monday));
+      return;
+    }
     if (isDay) {
       const ok = await confirm({
         title: `Desfazer os ajustes de ${formatDate(date)}?`,
@@ -410,6 +446,12 @@ export function Board() {
     minWidth: `calc(var(--hour-w) + ${columns.length} * var(--cell-min))`,
   };
   const overridesCount = isDay ? adjustedSlotCount((current.dayOverrides ?? []).filter((o) => o.date === date)) : 0;
+  const weekCount = isDay ? adjustedSlotCount((current.weekOverrides ?? []).filter((o) => o.week === monday)) : 0;
+  const copyWeek = () => {
+    const next = addDays(monday, 7);
+    apply((d) => { copyWeekOverrides(d, monday, next); });
+    notify(`Ajustes desta semana copiados para a semana de ${formatDayMonth(next)}. Abra a semana seguinte para conferir.`);
+  };
 
   return (
     <div>
@@ -428,6 +470,12 @@ export function Board() {
             <button className="btn sm" onClick={() => setDate(pickOpenDay(current, todayIso()))} disabled={weekDays.includes(todayIso()) && date === todayIso()}>Hoje</button>
             <DateInput value={date} onChange={(d) => setDate(pickOpenDay(current, d))} ariaLabel="Ir para a data" />
             <DayPdfButton date={date} />
+            {!readOnly && (
+              <span className="scope-toggle" role="radiogroup" aria-label="O que se arrasta vale para">
+                <button className={`btn sm${scope === 'week' ? ' active' : ''}`} onClick={() => setScope('week')} title="Cada ficha que você soltar vale de segunda a sexta desta semana">Vale para a semana inteira</button>
+                <button className={`btn sm${scope === 'day' ? ' active' : ''}`} onClick={() => setScope('day')} title="Cada ficha que você soltar vale só para este dia">Só este dia</button>
+              </span>
+            )}
           </>
         )}
         {readOnly && hasDayOverrides(current, date) && (
@@ -443,7 +491,14 @@ export function Board() {
             </button>
             <span className="muted small hint-shift">ou segure Shift ao soltar</span>
             <span className="spacer" />
-            {isDay ? (
+            {isDay && weekCount > 0 && (
+              <button className="btn sm" onClick={copyWeek} title="Leva os ajustes desta semana para a semana seguinte">Copiar para a próxima semana</button>
+            )}
+            {isDay && scope === 'week' ? (
+              <button className="btn danger" onClick={onClear} disabled={weekCount === 0}>
+                Voltar a semana à base{weekCount > 0 ? ` (${weekCount})` : ''}
+              </button>
+            ) : isDay ? (
               <button className="btn danger" onClick={onClear} disabled={!hasDayOverrides(data, date)}>
                 Limpar ajustes do dia{overridesCount > 0 ? ` (${overridesCount})` : ''}
               </button>
@@ -464,7 +519,7 @@ export function Board() {
           Ajustes aqui servem para registrar o que aconteceu de fato.
         </p>
       )}
-      {isDay && <DaySummary day={day} data={data} />}
+      {isDay && <DaySummary day={day} data={data} weekCount={weekCount} scope={scope} />}
 
       <DndContext
         sensors={sensors}
@@ -527,7 +582,7 @@ export function Board() {
             </div>
             </div>
           </div>
-          <Palette ref={paletteRef} day={day} asbs={data.asbs} colors={colors} readOnly={readOnly} isDay={isDay} active={active} alerts={alerts} />
+          <Palette ref={paletteRef} day={day} asbs={data.asbs} colors={colors} readOnly={readOnly} isDay={isDay} scope={scope} active={active} alerts={alerts} />
         </div>
         <DragOverlay dropAnimation={null} style={{ pointerEvents: 'none' }}>
           {activeAsb ? <ChipOverlay label={activeAsb.name} color={colors.get(activeAsb.id) ?? '#555'} /> : null}
@@ -702,11 +757,12 @@ interface PaletteProps {
   colors: Map<string, string>;
   readOnly: boolean;
   isDay: boolean;
+  scope: Scope;
   active: DragItem | null;
   alerts: Alert[];
 }
 
-function Palette({ ref, day, asbs, colors, readOnly, isDay, active, alerts }: PaletteProps) {
+function Palette({ ref, day, asbs, colors, readOnly, isDay, scope, active, alerts }: PaletteProps) {
   const { setNodeRef, isOver } = useDroppable({ id: 'palette', data: { type: 'palette' } satisfies PaletteDrop, disabled: readOnly || active?.type !== 'slot' });
   const setRefs = (el: HTMLElement | null) => {
     setNodeRef(el);
@@ -725,7 +781,7 @@ function Palette({ ref, day, asbs, colors, readOnly, isDay, active, alerts }: Pa
             : active?.type === 'slot'
               ? 'Solte aqui para remover.'
               : isDay
-                ? 'O que você arrastar aqui vale só para este dia. Da lista para uma sala: acrescenta (ela continua onde estava); sala ocupada vira apoio. Para apoio, CME, almoxarifado ou almoço ela sai de onde estava. Fora do horário dela, pergunta se é hora extra.'
+                ? `O que você arrastar aqui vale ${scope === 'week' ? 'de segunda a sexta desta semana' : 'só para este dia'}. Da lista para uma sala: acrescenta (ela continua onde estava); sala ocupada vira apoio. Para apoio, CME, almoxarifado ou almoço ela sai de onde estava. Fora do horário dela, pergunta se é hora extra.`
                 : 'Arraste uma ficha para o quadro. Da lista para uma sala: acrescenta (ela continua onde estava); sala ocupada vira apoio. Para apoio, CME, almoxarifado ou almoço ela sai de onde estava. Ficha do quadro: move, exceto para sala ocupada, onde vira apoio e fica também onde estava.'}
         </p>
         {!readOnly && (
@@ -748,7 +804,7 @@ function Palette({ ref, day, asbs, colors, readOnly, isDay, active, alerts }: Pa
                 <Chip id={`pal:${asb.id}`} label={asb.name} color={color} item={readOnly || abs ? undefined : { type: 'palette', asbId: asb.id }} disabled={readOnly || !!abs} />
                 <div className="meta">
                   <span>
-                    {formatRange(asb.start, asb.end)}{asb.lunch ? '' : ', sem almoço'}
+                    {formatRange(asb.start, asb.end)}{asb.originalHours ? ' (trocado)' : ''}{asb.lunch ? '' : ', sem almoço'}
                     {extras.map((e) => ` + extra ${formatRange(e.start, e.end)}`).join('')}
                   </span>
                   <span className={lunchAlert.has(asb.id) ? 'error' : undefined}>{filled} de {total} blocos</span>
@@ -772,7 +828,7 @@ function Palette({ ref, day, asbs, colors, readOnly, isDay, active, alerts }: Pa
   );
 }
 
-function DaySummary({ day, data }: { day: EffectiveDay; data: AppData }) {
+function DaySummary({ day, data, weekCount, scope }: { day: EffectiveDay; data: AppData; weekCount: number; scope: Scope }) {
   if (!day.open) {
     return (
       <p className="card muted">
@@ -794,9 +850,14 @@ function DaySummary({ day, data }: { day: EffectiveDay; data: AppData }) {
     items.push(`${d.name} de folga${abs ? ` (${abs.reason})` : ''}: a ASB da sala fica livre e é remanejada se outra sala precisar.`);
   }
   for (const e of day.extraShifts) items.push(`${name(e.asbId)} faz hora extra ${formatRange(e.start, e.end)}${e.note ? ` (${e.note})` : ''}.`);
+  if (weekCount > 0) items.push(`Esta semana tem ${weekCount} ajuste${weekCount > 1 ? 's' : ''} em relação à escala base (valem de segunda a sexta).`);
   const adjusted = adjustedSlotCount(day.overrides);
   if (adjusted > 0) items.push(`${adjusted} ajuste${adjusted > 1 ? 's' : ''} feito${adjusted > 1 ? 's' : ''} só para este dia.`);
-  if (items.length === 0) return <p className="muted small">Sem ausências, folgas ou horas extras nesta data. O dia segue a escala base. O que você arrastar aqui vale só para este dia.</p>;
+  for (const a of data.asbs) {
+    if (a.originalHours) items.push(`${a.name} está com horário trocado: ${formatRange(a.start, a.end)} (normal ${formatRange(a.originalHours.start, a.originalHours.end)})${a.originalHours.note ? `, ${a.originalHours.note}` : ''}.`);
+  }
+  void scope;
+  if (items.length === 0) return <p className="muted small">Sem ausências, folgas ou horas extras nesta data. A semana segue a escala base. O que você arrastar vale para a semana inteira (ou só para este dia, se escolher).</p>;
   return (
     <div className="card" style={{ marginBottom: 12 }}>
       <h3>Este dia</h3>

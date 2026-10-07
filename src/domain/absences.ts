@@ -1,4 +1,4 @@
-import type { Absence, AppData, DentistAbsence, ExtraShift, Id, IsoDate } from './types';
+import type { Absence, AppData, DentistAbsence, ExtraShift, Id, IsoDate, ShiftChange } from './types';
 import { isBetween, weekdayOf } from './dates';
 import { dataForDate } from './history';
 
@@ -95,4 +95,14 @@ export function paidExtraHours(e: ExtraShift, contract: { start: number; end: nu
     if (!contract || h < contract.start || h >= contract.end) n++;
   }
   return n;
+}
+
+/** Trocas de horário que tocam o período. */
+export function shiftChangesBetween(data: Pick<AppData, 'shiftChanges'>, from: IsoDate, to: IsoDate): ShiftChange[] {
+  return (data.shiftChanges ?? []).filter((c) => c.from <= to && c.to >= from);
+}
+
+/** Trocas de horário da mesma ASB que se sobrepõem ao período, ignorando a própria (ao editar). */
+export function overlappingShiftChanges(data: Pick<AppData, 'shiftChanges'>, asbId: Id, from: IsoDate, to: IsoDate, exceptId?: Id): ShiftChange[] {
+  return (data.shiftChanges ?? []).filter((c) => c.id !== exceptId && c.asbId === asbId && c.from <= to && c.to >= from);
 }

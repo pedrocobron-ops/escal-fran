@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Absence, AppData, DaySlot, DaySlotKind, Id, IsoDate, Slot, SlotKind } from '../domain';
+import type { Absence, AppData, DaySlot, DaySlotKind, Id, IsoDate, Slot, SlotKind, WeekSlot } from '../domain';
 import { addDays, canAssign, nextProteseRecords, recordHistory, todayIso } from '../domain';
 import { loadInitial, seedData, type StorageAdapter } from './storage';
 import type { SyncStatus } from './sync';
@@ -410,6 +410,57 @@ export function setDaySlots(draft: AppData, date: IsoDate, asbId: Id, hours: num
 }
 
 /** Tira os ajustes da data e as horas extras registradas pelo quadro nela. */
+// ---- Ajustes de uma semana (escala da semana vale de segunda a sexta) ----
+
+/** Define exatamente o que a ASB faz nessas horas em todos os dias da semana de `monday`. */
+export function setWeekSlots(draft: AppData, monday: IsoDate, asbId: Id, hours: number[], entries: CellTarget[], opts: { hold?: boolean } = {}): void {
+  const set = new Set(hours);
+  draft.weekOverrides = (draft.weekOverrides ?? []).filter((o) => !(o.week === monday && o.asbId === asbId && set.has(o.hour)));
+  for (const hour of hours) {
+    if (entries.length === 0) {
+      draft.weekOverrides.push({ id: newId('sem'), week: monday, asbId, hour, kind: 'livre', ...(opts.hold ? { hold: true } : {}) });
+      continue;
+    }
+    for (const e of entries) {
+      const o: WeekSlot = { id: newId('sem'), week: monday, asbId, hour, kind: e.kind as DaySlotKind, ...(opts.hold ? { hold: true } : {}) };
+      if (e.roomId && (e.kind === 'sala' || e.kind === 'apoio')) o.roomId = e.roomId;
+      draft.weekOverrides.push(o);
+    }
+  }
+}
+
+/** Onde a ASB está nessa hora no plano da semana (escala base com os ajustes da semana). */
+export function weekEntriesAt(data: AppData, monday: IsoDate, asbId: Id, hour: number): CellTarget[] {
+  const week = (data.weekOverrides ?? []).filter((o) => o.week === monday && o.asbId === asbId && o.hour === hour);
+  if (week.length > 0) return week.filter((o) => o.kind !== 'livre').map((o) => ({ kind: o.kind as SlotKind, roomId: o.roomId }));
+  return baseEntriesAt(data, asbId, hour);
+}
+
+/** Plano da semana de todas as ASBs numa hora: quem está em cada lugar (sem ausências). */
+export function weekPlanAt(data: AppData, monday: IsoDate, hour: number): Array<{ asbId: Id } & CellTarget> {
+  const out: Array<{ asbId: Id } & CellTarget> = [];
+  for (const a of data.asbs) {
+    if (!a.active) continue;
+    for (const e of weekEntriesAt(data, monday, a.id, hour)) out.push({ asbId: a.id, ...e });
+  }
+  return out;
+}
+
+export function clearWeekOverrides(draft: AppData, monday: IsoDate): void {
+  draft.weekOverrides = (draft.weekOverrides ?? []).filter((o) => o.week !== monday);
+}
+
+export function hasWeekOverrides(data: AppData, monday: IsoDate): boolean {
+  return (data.weekOverrides ?? []).some((o) => o.week === monday);
+}
+
+/** Copia os ajustes de uma semana para outra (substituindo o que a outra tinha). */
+export function copyWeekOverrides(draft: AppData, fromMonday: IsoDate, toMonday: IsoDate): number {
+  const src = (draft.weekOverrides ?? []).filter((o) => o.week === fromMonday);
+  draft.weekOverrides = [...(draft.weekOverrides ?? []).filter((o) => o.week !== toMonday), ...src.map((o) => ({ ...o, id: newId('sem'), week: toMonday }))];
+  return src.length;
+}
+
 export function clearDayOverrides(draft: AppData, date: IsoDate): void {
   draft.dayOverrides = (draft.dayOverrides ?? []).filter((o) => o.date !== date);
   draft.extraShifts = (draft.extraShifts ?? []).filter((e) => !(e.fromBoard && e.date === date));

@@ -9,20 +9,35 @@ import type { AppData, IsoDate, StructureKey, StructureSnapshot } from './types'
 import { STRUCTURE_KEYS } from './types';
 import { addDays } from './dates';
 
-/** Estrutura valendo numa data. Sem data (escala base) ou sem histórico, devolve os dados atuais. */
+/**
+ * Estrutura valendo numa data: histórico aplicado e, se houver troca de horário de alguma
+ * ASB nessa data, o contrato dela já com o horário trocado (e `originalHours` com o normal).
+ * Sem data (escala base), devolve os dados atuais.
+ */
 export function dataForDate(data: AppData, date: IsoDate | ''): AppData {
+  if (!date) return data;
   const hist = data.history ?? [];
-  if (!date || hist.length === 0 || date > hist[hist.length - 1].until) return data;
-  const out: AppData = { ...data };
-  for (let i = hist.length - 1; i >= 0 && hist[i].until >= date; i--) {
-    const snap = hist[i];
-    for (const key of STRUCTURE_KEYS) {
-      const v = (snap as unknown as Record<string, unknown>)[key];
-      // null no registro = o campo ainda não existia nessa época (ex.: horário de almoço padrão).
-      if (v !== undefined) (out as unknown as Record<string, unknown>)[key] = v === null ? undefined : v;
+  let out: AppData = data;
+  if (hist.length > 0 && date <= hist[hist.length - 1].until) {
+    out = { ...data };
+    for (let i = hist.length - 1; i >= 0 && hist[i].until >= date; i--) {
+      const snap = hist[i];
+      for (const key of STRUCTURE_KEYS) {
+        const v = (snap as unknown as Record<string, unknown>)[key];
+        // null no registro = o campo ainda não existia nessa época (ex.: horário de almoço padrão).
+        if (v !== undefined) (out as unknown as Record<string, unknown>)[key] = v === null ? undefined : v;
+      }
     }
   }
-  return out;
+  // Ausência vale acima da troca: quem está de folga nesse dia fica com o contrato normal.
+  const absent = new Set(out.absences.filter((a) => a.from <= date && date <= a.to).map((a) => a.asbId));
+  const changes = (data.shiftChanges ?? []).filter((c) => c.from <= date && date <= c.to && !absent.has(c.asbId));
+  if (changes.length === 0) return out;
+  const asbs = out.asbs.map((a) => {
+    const c = changes.find((x) => x.asbId === a.id);
+    return c ? { ...a, start: c.start, end: c.end, originalHours: { start: a.start, end: a.end, note: c.note } } : a;
+  });
+  return out === data ? { ...data, asbs } : { ...out, asbs };
 }
 
 function changedKeys(prev: AppData, next: AppData): StructureKey[] {

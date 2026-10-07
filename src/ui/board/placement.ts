@@ -1,6 +1,6 @@
 // Regras de colocar uma ficha no quadro, sem React, para poder testar.
 import type { AppData, IsoDate, SlotKind } from '../../domain';
-import { baseEntriesAt, removeSlotAt, setBaseAt, setDaySlots, type CellTarget } from '../../store/useStore';
+import { baseEntriesAt, removeSlotAt, setBaseAt, setDaySlots, setWeekSlots, type CellTarget } from '../../store/useStore';
 
 /** Ficha que está sendo movida (de onde ela saiu). */
 export interface Origin {
@@ -60,6 +60,16 @@ export function placeInBase(d: AppData, p: Placement): void {
   const { asbId, hours, target } = p;
   if (leavesOrigin(p)) removeSlotAt(d, asbId, p.orig.hour, p.orig.kind, p.orig.roomId);
   for (const h of hours) setBaseAt(d, asbId, h, [...keptAt(p, h, baseEntriesAt(d, asbId, h)), target]);
+}
+
+/** Aplica como ajuste da semana (vale de segunda a sexta). `entriesAt` é o plano da semana. */
+export function placeInWeek(d: AppData, monday: IsoDate, p: Placement, entriesAt: (hour: number) => CellTarget[], hold: boolean): void {
+  const { asbId, hours, target } = p;
+  if (leavesOrigin(p)) {
+    const origT: CellTarget = { kind: p.orig.kind, roomId: p.orig.roomId };
+    setWeekSlots(d, monday, asbId, [p.orig.hour], entriesAt(p.orig.hour).filter((e) => !sameTarget(e, origT)), { hold });
+  }
+  for (const h of hours) setWeekSlots(d, monday, asbId, [h], [...keptAt(p, h, entriesAt(h)), target], { hold });
 }
 
 /**

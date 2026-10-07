@@ -216,6 +216,7 @@ a { color: var(--accent); }
 .list-toggle { font-size: 12px; }
 .calendar .day .abs.dentist { background: #444; }
 .calendar .day .abs.extra { background: var(--ok); }
+.calendar .day .abs.shift { background: #6d28d9; }
 .badge { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 600; }
 .badge.critico { background: var(--danger); color: #fff; }
 .badge.aviso { background: var(--warn); color: #fff; }
@@ -331,3 +332,6 @@ a { color: var(--accent); }
 .plain-list li.current { border-color: var(--accent); background: var(--accent-soft); }
 .alerts-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .alerts.collapsed { padding: 8px 14px; }
+.scope-toggle { display: inline-flex; gap: 0; }
+.scope-toggle .btn:first-child { border-radius: 6px 0 0 6px; }
+.scope-toggle .btn:last-child { border-radius: 0 6px 6px 0; margin-left: -1px; }

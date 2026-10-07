@@ -28,6 +28,7 @@ export function MonthScreen() {
   const absences = absencesBetween(data, first, last).sort((a, b) => a.from.localeCompare(b.from));
   const dentAbs = dentistAbsencesBetween(data, first, last).sort((a, b) => a.from.localeCompare(b.from));
   const extras = validExtraShiftsBetween(data, first, last).sort((a, b) => a.date.localeCompare(b.date) || a.start - b.start);
+  const shifts = (current.shiftChanges ?? []).filter((c) => c.from <= last && c.to >= first).sort((a, b) => a.from.localeCompare(b.from));
   const dentName = (id: string) => findDentistAnywhere(data, id)?.name ?? '?';
 
   return (
@@ -125,6 +126,25 @@ export function MonthScreen() {
         )}
         <p className="muted small" style={{ marginTop: 6 }}>Para deixar alguém fixa numa tarefa (por exemplo, o mês inteiro na conferência de prótese), use "Responsável fixo por período" em Tarefas e rodízios.</p>
       </section>
+
+      {shifts.length > 0 && (
+        <section className="card">
+          <h2>Trocas de horário</h2>
+          <table className="table responsive">
+            <thead><tr><th>ASB</th><th>Período</th><th>Horário nesses dias</th><th>Obs.</th></tr></thead>
+            <tbody>
+              {shifts.map((c) => (
+                <tr key={c.id}>
+                  <td>{name(c.asbId)}</td>
+                  <td className="mono" data-label="Período">{c.from === c.to ? formatDate(c.from) : `${formatDate(c.from)} a ${formatDate(c.to)}`}</td>
+                  <td className="mono" data-label="Horário">{formatRange(c.start, c.end)}</td>
+                  <td data-label="Obs.">{c.note ?? ''}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
 
       <section className="card">
         <h2>Ausências e coberturas</h2>
