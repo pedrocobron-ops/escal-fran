@@ -1,8 +1,11 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import './styles.css';
 import { browserAdapter } from './store/storage';
-import { SupabaseRemote, SyncedAdapter, readSyncConfig } from './store/sync';
+import { SyncedAdapter, clearLegacyCode, readLegacyCode } from './store/sync';
+import { LAST_USER_KEY, type Session } from './store/auth';
+import { getAuth, getRemote } from './store/session';
 import { useStore } from './store/useStore';
+import { LoginScreen } from './ui/auth/LoginScreen';
 import { ConfirmProvider } from './ui/common/Modal';
 import { ErrorBoundary } from './ui/common/ErrorBoundary';
 import { RecoveryScreen } from './ui/common/RecoveryScreen';
@@ -26,18 +29,52 @@ const SCREENS: Record<Route, () => ReactNode> = {
   ajustes: () => <SettingsScreen />,
 };
 
+/** Limpa a cópia local quando outra conta entra neste navegador (a escala é da conta). */
+function prepareLocalFor(session: Session): void {
+  try {
+    const last = window.localStorage.getItem(LAST_USER_KEY);
+    if (last && last !== session.user.id) {
+      for (const key of Object.keys(window.localStorage)) {
+        if (key.startsWith('escala-ceo:') && key !== 'escala-ceo:sessao') window.localStorage.removeItem(key);
+      }
+    }
+    window.localStorage.setItem(LAST_USER_KEY, session.user.id);
+  } catch {
+    // sem localStorage
+  }
+}
+
 export function App() {
   const loaded = useStore((s) => s.loaded);
   const recovering = useStore((s) => s.recovery !== null);
   const init = useStore((s) => s.init);
+  const syncState = useStore((s) => s.syncStatus.state);
   const route = useHashRoute();
+  const auth = getAuth();
+  const [session, setSession] = useState<Session | null>(() => auth?.session ?? null);
+
+  useEffect(() => auth?.subscribe(setSession), [auth]);
 
   useEffect(() => {
+    if (auth && !session) return;
     const { adapter: local, blocked } = browserAdapter();
-    const cfg = blocked ? null : readSyncConfig();
-    const adapter = cfg ? new SyncedAdapter(local, new SupabaseRemote(cfg), window.localStorage, (s) => useStore.getState().setSyncStatus(s)) : local;
-    void init(adapter, { blocked });
-  }, [init]);
+    const remote = blocked ? null : getRemote();
+    if (remote && session) {
+      prepareLocalFor(session);
+      const adapter = new SyncedAdapter(local, remote, window.localStorage, (s) => useStore.getState().setSyncStatus(s));
+      // Versão antiga deste app usava um "código da escala": leva o que estava no código para a conta.
+      const legacy = readLegacyCode();
+      const start = legacy ? remote.importCode(legacy).then(() => clearLegacyCode(), () => undefined) : Promise.resolve();
+      void start.then(() => init(adapter, { blocked }));
+    } else {
+      void init(local, { blocked });
+    }
+  }, [init, auth, session]);
+
+  // Sessão vencida ou recusada pela nuvem: volta para a tela de entrada (a cópia local fica).
+  useEffect(() => {
+    if (syncState === 'sem-login' && auth?.session) void auth.logout();
+  }, [syncState, auth]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -67,6 +104,17 @@ export function App() {
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, []);
+
+  if (auth && !session) {
+    return (
+      <ConfirmProvider>
+        <header className="app-header">
+          <span className="brand">Escala CEO</span>
+        </header>
+        <LoginScreen auth={auth} onDone={() => window.location.reload()} />
+      </ConfirmProvider>
+    );
+  }
 
   return (
     <ConfirmProvider>
@@ -113,6 +161,7 @@ function SyncIndicator() {
     : st.state === 'syncing' ? 'Nuvem: sincronizando...'
     : st.state === 'offline' ? 'Nuvem: sem conexão (salvo aqui)'
     : st.state === 'conflict' ? 'Nuvem: decida qual versão vale'
+    : st.state === 'sem-login' ? 'Nuvem: entre de novo'
     : 'Nuvem: problema (veja Ajustes)';
   return <span className={cls} title={st.state === 'offline' || st.state === 'error' ? st.error : 'Sincronização entre aparelhos ligada'}>{text}</span>;
 }
@@ -150,8 +199,8 @@ function Notices() {
       {firstUse && !blocked && (
         <div className="backup-bar" role="status">
           <span>
-            Nenhuma escala salva neste navegador: o app começou pela escala inicial dos documentos.
-            Se você já usava o app em outro aparelho, entre com o código da escala em Ajustes (Sincronizar entre aparelhos) ou importe o backup.
+            Nenhuma escala salva nesta conta nem neste navegador: o app começou pela escala inicial dos documentos.
+            Se você tem um backup de antes, importe em Ajustes.
           </span>
           <span className="spacer" />
           <a className="btn sm" href={href('ajustes')}>Importar backup</a>

@@ -20,27 +20,43 @@ export interface CleoResponse {
 export interface CleoEndpoint {
   url: string;
   key: string;
-  code: string;
+  /** Token da sessão da conta (renovado pelo AuthClient). */
+  token: (force?: boolean) => Promise<string>;
 }
 
 export class CleoError extends Error {
-  constructor(message: string, readonly kind: 'offline' | 'codigo' | 'limite' | 'sem-chave' | 'servidor') {
+  constructor(message: string, readonly kind: 'offline' | 'login' | 'limite' | 'sem-chave' | 'servidor') {
     super(message);
   }
 }
 
-export async function callCleo(ep: CleoEndpoint, body: { system: string; messages: ChatMessage[]; tools: ToolDef[] }, signal?: AbortSignal, fetchFn: typeof fetch = fetch): Promise<CleoResponse> {
+export async function callCleo(ep: CleoEndpoint, body: { system: string; messages: ChatMessage[]; tools: ToolDef[] }, signal?: AbortSignal, fetchFn: typeof fetch = fetch, retry = true): Promise<CleoResponse> {
+  let token: string;
+  try {
+    token = await ep.token();
+  } catch {
+    throw new CleoError('Sua sessão venceu. Entre de novo.', 'login');
+  }
   let res: Response;
   try {
     res = await fetchFn(`${ep.url.replace(/\/$/, '')}/functions/v1/cleo`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', apikey: ep.key, Authorization: `Bearer ${ep.key}` },
-      body: JSON.stringify({ codigo: ep.code, ...body }),
+      headers: { 'Content-Type': 'application/json', apikey: ep.key, Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
       signal,
     });
   } catch (e) {
     if (signal?.aborted) throw e;
     throw new CleoError('Sem conexão com a nuvem. Confira a internet e tente de novo.', 'offline');
+  }
+  if (res.status === 401 && retry) {
+    // Token vencido no meio do caminho: renova uma vez e repete.
+    try {
+      await ep.token(true);
+    } catch {
+      throw new CleoError('Sua sessão venceu. Entre de novo.', 'login');
+    }
+    return callCleo(ep, body, signal, fetchFn, false);
   }
   if (res.ok) return (await res.json()) as CleoResponse;
   let detail = '';
@@ -50,7 +66,7 @@ export async function callCleo(ep: CleoEndpoint, body: { system: string; message
   } catch {
     // corpo sem JSON
   }
-  if (res.status === 403) throw new CleoError('A nuvem não reconheceu o código da escala. Confira em Ajustes, em Sincronizar entre aparelhos.', 'codigo');
+  if (res.status === 401 || res.status === 403) throw new CleoError('A nuvem não reconheceu sua conta. Saia e entre de novo.', 'login');
   if (res.status === 429) throw new CleoError('A Cléo atingiu o limite de conversas de hoje. Amanhã volta ao normal.', 'limite');
   if (res.status === 503) throw new CleoError('A Cléo ainda não foi ativada na nuvem (falta a chave da API). Fale com quem cuida do app.', 'sem-chave');
   throw new CleoError(`A Cléo não conseguiu responder agora${detail ? ` (${detail})` : ''}. Tente de novo em instantes.`, 'servidor');

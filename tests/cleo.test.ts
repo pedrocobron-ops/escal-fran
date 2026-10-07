@@ -262,13 +262,15 @@ describe('Cléo: laço da conversa', () => {
 });
 
 describe('Cléo: cliente e função da nuvem', () => {
-  const ep = { url: 'https://x.supabase.co', key: 'anon', code: 'ceo-abcd-efgh-ijkl' };
-  it('callCleo manda código, chave e corpo; traduz erros', async () => {
+  let renewals = 0;
+  const ep = { url: 'https://x.supabase.co', key: 'anon', token: async (force?: boolean) => { if (force) renewals++; return 'user-token'; } };
+  it('callCleo manda a chave do app, o token da conta e o corpo; traduz erros', async () => {
     const fetchFn = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       expect(String(url)).toBe('https://x.supabase.co/functions/v1/cleo');
       const body = JSON.parse(String(init?.body));
-      expect(body.codigo).toBe(ep.code);
+      expect(body.codigo).toBeUndefined();
       expect((init?.headers as Record<string, string>).apikey).toBe('anon');
+      expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer user-token');
       return new Response(JSON.stringify({ content: [{ type: 'text', text: 'oi' }], stop_reason: 'end_turn' }), { status: 200 });
     }) as unknown as typeof fetch;
     const r = await callCleo(ep, { system: 's', messages: [{ role: 'user', content: 'oi' }], tools: [] }, undefined, fetchFn);
@@ -277,23 +279,33 @@ describe('Cléo: cliente e função da nuvem', () => {
       const f = (async () => new Response(JSON.stringify({ erro: 'x' }), { status })) as unknown as typeof fetch;
       return callCleo(ep, { system: 's', messages: [], tools: [] }, undefined, f).catch((e: CleoError) => e.kind);
     };
-    expect(await err(403)).toBe('codigo');
+    renewals = 0;
+    expect(await err(401)).toBe('login');
+    expect(renewals).toBe(1); // tentou renovar o token uma vez antes de desistir
+    expect(await err(403)).toBe('login');
     expect(await err(429)).toBe('limite');
     expect(await err(503)).toBe('sem-chave');
     expect(await err(500)).toBe('servidor');
     const offline = (async () => { throw new TypeError('fail'); }) as unknown as typeof fetch;
     await expect(callCleo(ep, { system: 's', messages: [], tools: [] }, undefined, offline)).rejects.toMatchObject({ kind: 'offline' });
+    const semSessao = { ...ep, token: async () => { throw new Error('sem'); } };
+    await expect(callCleo(semSessao, { system: 's', messages: [], tools: [] }, undefined, fetchFn)).rejects.toMatchObject({ kind: 'login' });
   });
 
   const env = { ANTHROPIC_API_KEY: 'sk-test', SUPABASE_URL: 'https://x.supabase.co', SUPABASE_ANON_KEY: 'anon', SUPABASE_SERVICE_ROLE_KEY: 'service' };
-  const post = (body: unknown, apikey = 'anon') => new Request('https://x.supabase.co/functions/v1/cleo', { method: 'POST', headers: { apikey, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  const good = { codigo: 'ceo-abcd-efgh-ijkl', system: 'sys', messages: [{ role: 'user', content: 'oi' }], tools: [{ name: 't' }] };
+  const post = (body: unknown, apikey = 'anon', bearer = 'user-token') => new Request('https://x.supabase.co/functions/v1/cleo', { method: 'POST', headers: { apikey, Authorization: `Bearer ${bearer}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const good = { system: 'sys', messages: [{ role: 'user', content: 'oi' }], tools: [{ name: 't' }] };
 
-  function cloud(opts: { auth?: unknown; upstream?: Response } = {}) {
+  function cloud(opts: { auth?: unknown; upstream?: Response; user?: Response } = {}) {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const fetchFn = (async (url: string | URL | Request, init?: RequestInit) => {
       calls.push({ url: String(url), init: init ?? {} });
-      if (String(url).includes('/rest/v1/rpc/cleo_autoriza')) return new Response(JSON.stringify(opts.auth ?? { ok: true, restantes: 10 }), { status: 200 });
+      if (String(url).includes('/auth/v1/user')) {
+        const h = init?.headers as Record<string, string>;
+        if (opts.user) return opts.user;
+        return h.Authorization === 'Bearer user-token' ? new Response(JSON.stringify({ id: 'u1', email: 'f@x' }), { status: 200 }) : new Response('{"msg":"invalid"}', { status: 401 });
+      }
+      if (String(url).includes('/rest/v1/rpc/cleo_autoriza_usuario')) return new Response(JSON.stringify(opts.auth ?? { ok: true, restantes: 10 }), { status: 200 });
       return opts.upstream ?? new Response(JSON.stringify({ content: [{ type: 'text', text: 'oi' }], stop_reason: 'end_turn', usage: { input_tokens: 1 } }), { status: 200 });
     }) as unknown as typeof fetch;
     return { calls, fetchFn };
@@ -325,11 +337,14 @@ describe('Cléo: cliente e função da nuvem', () => {
     expect((await handle(post(good), { ...env, ANTHROPIC_API_KEY: undefined })).status).toBe(503);
   });
 
-  it('código malformado ou desconhecido é 403; limite é 429', async () => {
-    expect((await handle(post({ ...good, codigo: 'abc' }), env, cloud().fetchFn)).status).toBe(403);
-    expect((await handle(post(good), env, cloud({ auth: { ok: false, motivo: 'codigo' } }).fetchFn)).status).toBe(403);
+  it('sem token ou token inválido é 401; limite é 429; sem messages é 400', async () => {
+    const semToken = new Request('https://x.supabase.co/functions/v1/cleo', { method: 'POST', headers: { apikey: 'anon', 'Content-Type': 'application/json' }, body: JSON.stringify(good) });
+    expect((await handle(semToken, env, cloud().fetchFn)).status).toBe(401);
+    expect((await handle(post(good, 'anon', 'token-errado'), env, cloud().fetchFn)).status).toBe(401);
     expect((await handle(post(good), env, cloud({ auth: { ok: false, motivo: 'limite' } }).fetchFn)).status).toBe(429);
     expect((await handle(post({ ...good, messages: [] }), env, cloud().fetchFn)).status).toBe(400);
+    // a nuvem de autenticação fora do ar não vira "sem login": é 502
+    expect((await handle(post(good), env, cloud({ user: new Response('x', { status: 500 }) }).fetchFn)).status).toBe(502);
   });
 
   it('repassa à Anthropic com a chave, o modelo e o cache do sistema; nunca devolve a chave', async () => {
@@ -340,11 +355,14 @@ describe('Cléo: cliente e função da nuvem', () => {
     expect(body.stop_reason).toBe('end_turn');
     expect(body.restantes).toBe(10);
     expect(JSON.stringify(body)).not.toContain('sk-test');
-    const auth = c.calls[0];
-    expect(auth.url).toContain('/rest/v1/rpc/cleo_autoriza');
+    const who = c.calls[0];
+    expect(who.url).toContain('/auth/v1/user');
+    expect((who.init.headers as Record<string, string>).Authorization).toBe('Bearer user-token');
+    const auth = c.calls[1];
+    expect(auth.url).toContain('/rest/v1/rpc/cleo_autoriza_usuario');
     expect((auth.init.headers as Record<string, string>).apikey).toBe('service');
-    expect(JSON.parse(String(auth.init.body))).toEqual({ p_codigo: 'ceo-abcd-efgh-ijkl', p_limite: 300 });
-    const up = c.calls[1];
+    expect(JSON.parse(String(auth.init.body))).toEqual({ p_user: 'u1', p_limite: 300 });
+    const up = c.calls[2];
     expect(up.url).toBe('https://api.anthropic.com/v1/messages');
     const h = up.init.headers as Record<string, string>;
     expect(h['x-api-key']).toBe('sk-test');
@@ -359,8 +377,8 @@ describe('Cléo: cliente e função da nuvem', () => {
   it('modelo e limite vêm do ambiente; chave inválida na Anthropic vira 503', async () => {
     const c = cloud();
     await handle(post(good), { ...env, CLEO_MODEL: 'claude-sonnet-5-5', CLEO_LIMITE_DIA: '50' }, c.fetchFn);
-    expect(JSON.parse(String(c.calls[0].init.body)).p_limite).toBe(50);
-    expect(JSON.parse(String(c.calls[1].init.body)).model).toBe('claude-sonnet-5-5');
+    expect(JSON.parse(String(c.calls[1].init.body)).p_limite).toBe(50);
+    expect(JSON.parse(String(c.calls[2].init.body)).model).toBe('claude-sonnet-5-5');
     const bad = cloud({ upstream: new Response(JSON.stringify({ error: { message: 'invalid x-api-key' } }), { status: 401 }) });
     const res = await handle(post(good), env, bad.fetchFn);
     expect(res.status).toBe(503);

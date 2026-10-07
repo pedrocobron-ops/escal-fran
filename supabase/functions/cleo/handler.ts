@@ -1,4 +1,4 @@
-// Função "cleo": recebe a conversa do app, confere o código da escala e o limite diário,
+// Função "cleo": recebe a conversa do app, confere a conta (token da sessão) e o limite diário,
 // e repassa à API da Anthropic com a chave guardada nos segredos do projeto.
 // Este arquivo é puro (sem Deno.*) para ser testado com Vitest; index.ts o liga ao Deno.serve.
 
@@ -32,7 +32,7 @@ function json(status: number, body: unknown): Response {
 
 interface Autoriza {
   ok: boolean;
-  motivo?: 'codigo' | 'limite';
+  motivo?: 'login' | 'limite';
   restantes?: number;
 }
 
@@ -78,34 +78,49 @@ async function fingerprint(s: string): Promise<string> {
   return [...new Uint8Array(buf).slice(0, 4)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-/** Confere o código e conta a chamada do dia (função SQL public.cleo_autoriza, só com service role). */
-async function autoriza(env: Env, codigo: string, fetchFn: typeof fetch): Promise<Autoriza> {
-  const res = await fetchFn(`${env.SUPABASE_URL}/rest/v1/rpc/cleo_autoriza`, {
+/** Usuário dono do token da sessão (Supabase Auth), ou '' se o token não vale. */
+async function userIdOf(env: Env, apikey: string, bearer: string, fetchFn: typeof fetch): Promise<string> {
+  const res = await fetchFn(`${env.SUPABASE_URL}/auth/v1/user`, {
+    method: 'GET',
+    headers: { apikey, Authorization: `Bearer ${bearer}` },
+  });
+  if (res.status === 401 || res.status === 403) return '';
+  if (!res.ok) throw new Error(`auth ${res.status}`);
+  const u = (await res.json()) as { id?: unknown };
+  return typeof u.id === 'string' ? u.id : '';
+}
+
+/** Conta a chamada do dia da conta (função SQL public.cleo_autoriza_usuario, só com service role). */
+async function autoriza(env: Env, userId: string, fetchFn: typeof fetch): Promise<Autoriza> {
+  const res = await fetchFn(`${env.SUPABASE_URL}/rest/v1/rpc/cleo_autoriza_usuario`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       apikey: env.SUPABASE_SERVICE_ROLE_KEY ?? '',
       Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY ?? ''}`,
     },
-    body: JSON.stringify({ p_codigo: codigo, p_limite: Number(env.CLEO_LIMITE_DIA) || 300 }),
+    body: JSON.stringify({ p_user: userId, p_limite: Number(env.CLEO_LIMITE_DIA) || 300 }),
   });
-  if (!res.ok) throw new Error(`cleo_autoriza ${res.status}`);
+  if (!res.ok) throw new Error(`cleo_autoriza_usuario ${res.status}`);
   return (await res.json()) as Autoriza;
 }
 
 export async function handle(req: Request, env: Env, fetchFn: typeof fetch = fetch): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
   if (req.method !== 'POST') return json(405, { erro: 'método' });
-  const apikey = req.headers.get('apikey') ?? (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '');
+  const apikey = req.headers.get('apikey') ?? '';
   const allowed = allowedKeys(env);
   if (!apikey || !(allowed.has(apikey) || isProjectAnonJwt(apikey, env))) {
     // Só impressões digitais nos logs, nunca as chaves.
     console.warn(`chave do app não bate: recebida=${await fingerprint(apikey)} aceitas=${(await Promise.all([...allowed].map(fingerprint))).join(',')}`);
     return json(401, { erro: 'chave do app' });
   }
+  // Quem chama é a conta logada: o token da sessão vem no Authorization.
+  const bearer = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '').trim();
+  if (!bearer) return json(401, { erro: 'sem login' });
   if (!env.ANTHROPIC_API_KEY) return json(503, { erro: 'sem chave da API' });
 
-  let body: { codigo?: unknown; system?: unknown; messages?: unknown; tools?: unknown };
+  let body: { system?: unknown; messages?: unknown; tools?: unknown };
   try {
     const raw = await req.text();
     if (raw.length > MAX_BODY) return json(413, { erro: 'conversa grande demais' });
@@ -113,18 +128,24 @@ export async function handle(req: Request, env: Env, fetchFn: typeof fetch = fet
   } catch {
     return json(400, { erro: 'JSON inválido' });
   }
-  const codigo = typeof body.codigo === 'string' ? body.codigo.trim().toLowerCase() : '';
-  if (!/^ceo-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}$/.test(codigo)) return json(403, { erro: 'código' });
   if (typeof body.system !== 'string' || !Array.isArray(body.messages) || body.messages.length === 0) return json(400, { erro: 'faltam system e messages' });
   if (body.messages.length > MAX_MESSAGES) return json(400, { erro: 'conversa longa demais: comece outra' });
 
+  let userId: string;
+  try {
+    userId = await userIdOf(env, apikey, bearer, fetchFn);
+  } catch (e) {
+    return json(502, { erro: `conta: ${e instanceof Error ? e.message : String(e)}` });
+  }
+  if (!userId) return json(401, { erro: 'sem login' });
+
   let auth: Autoriza;
   try {
-    auth = await autoriza(env, codigo, fetchFn);
+    auth = await autoriza(env, userId, fetchFn);
   } catch (e) {
     return json(502, { erro: `autorização: ${e instanceof Error ? e.message : String(e)}` });
   }
-  if (!auth.ok) return auth.motivo === 'limite' ? json(429, { erro: 'limite do dia' }) : json(403, { erro: 'código' });
+  if (!auth.ok) return auth.motivo === 'limite' ? json(429, { erro: 'limite do dia' }) : json(401, { erro: 'sem login' });
 
   const upstream = await fetchFn('https://api.anthropic.com/v1/messages', {
     method: 'POST',

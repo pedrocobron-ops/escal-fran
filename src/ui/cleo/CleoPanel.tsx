@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { todayIso } from '../../domain';
 import { useStore } from '../../store/useStore';
-import { builtInProject, readSyncConfig } from '../../store/sync';
-import { href } from '../router';
+import { cloudProject, getAuth, getRemote } from '../../store/session';
 import { runTurn, trimHistory, TOOLS } from '../../ai/agent';
 import { CleoError, callCleo, type ChatMessage } from '../../ai/client';
 import { systemPrompt } from '../../ai/context';
@@ -11,20 +10,25 @@ import { dictationSupported, speak, speechSupported, startDictation, stopSpeakin
 type Item = { id: number; kind: 'user' | 'cleo' | 'tool' | 'error' | 'hint'; text: string };
 
 const SESSION_KEY = 'escala-ceo:cleo';
+type Saved = { items: Item[]; messages: ChatMessage[] };
 const VOICE_KEY = 'escala-ceo:cleo-voz';
 const WELCOME = 'Oi, eu sou a Cléo. Posso contar como está a escala e fazer mudanças por você. Experimente: "quem está na Sala 2 amanhã?", "a Laura vai faltar sexta, quem cobre?", "põe a Amanda na Sala 3 das 15h às 17h" ou "a Andrea troca para 07h às 13h na quinta".';
 
-function readSession(): { items: Item[]; messages: ChatMessage[] } | null {
+function isSaved(v: unknown): v is Saved {
+  return typeof v === 'object' && v !== null && Array.isArray((v as Saved).items) && Array.isArray((v as Saved).messages);
+}
+function readSession(): Saved | null {
   try {
     const raw = window.sessionStorage.getItem(SESSION_KEY);
-    return raw ? (JSON.parse(raw) as { items: Item[]; messages: ChatMessage[] }) : null;
+    const v = raw ? (JSON.parse(raw) as unknown) : null;
+    return isSaved(v) ? v : null;
   } catch {
     return null;
   }
 }
-function writeSession(items: Item[], messages: ChatMessage[]): void {
+function writeSession(saved: Saved): void {
   try {
-    window.sessionStorage.setItem(SESSION_KEY, JSON.stringify({ items: items.slice(-80), messages }));
+    window.sessionStorage.setItem(SESSION_KEY, JSON.stringify(saved));
   } catch {
     // sem sessionStorage: a conversa vale só enquanto a tela está aberta
   }
@@ -55,13 +59,15 @@ export function CleoPanel() {
 function Drawer({ onClose }: { onClose: () => void }) {
   const apply = useStore((s) => s.apply);
   const undo = useStore((s) => s.undo);
-  const cfg = readSyncConfig();
-  const project = builtInProject();
-  const endpoint = cfg && project ? { url: cfg.url || project.url, key: cfg.key || project.key, code: cfg.code } : null;
+  const project = cloudProject();
+  const auth = getAuth();
+  const remote = getRemote();
+  const endpoint = project && auth?.session ? { url: project.url, key: project.key, token: (force?: boolean) => auth.token(force) } : null;
 
   const saved = useRef(readSession());
   const [items, setItems] = useState<Item[]>(saved.current?.items ?? [{ id: 0, kind: 'cleo', text: WELCOME }]);
   const messagesRef = useRef<ChatMessage[]>(saved.current?.messages ?? []);
+  const [loadingHistory, setLoadingHistory] = useState(!!remote && !saved.current);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [listening, setListening] = useState(false);
@@ -77,9 +83,37 @@ function Drawer({ onClose }: { onClose: () => void }) {
   }, []);
 
   useEffect(() => {
-    writeSession(items, messagesRef.current);
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
-  }, [items]);
+  }, [items, loadingHistory]);
+
+  /** Guarda a conversa nesta aba e na conta (para continuar em outro aparelho). */
+  const persist = useCallback((list: Item[]) => {
+    const payload: Saved = { items: list.slice(-80), messages: messagesRef.current };
+    writeSession(payload);
+    if (remote) void remote.conversaPut(payload).catch(() => undefined);
+  }, [remote]);
+
+  // Conversa guardada na conta: continua de onde parou, em qualquer aparelho.
+  useEffect(() => {
+    if (!remote || saved.current) return;
+    let alive = true;
+    remote
+      .conversaGet()
+      .then((v) => {
+        if (!alive || !isSaved(v) || v.items.length === 0) return;
+        messagesRef.current = v.messages;
+        nextId.current = Math.max(...v.items.map((i) => i.id)) + 1;
+        setItems(v.items);
+        writeSession(v);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (alive) setLoadingHistory(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [remote]);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -144,9 +178,13 @@ function Drawer({ onClose }: { onClose: () => void }) {
         abortRef.current = null;
         setBusy(false);
         inputRef.current?.focus();
+        setItems((list) => {
+          persist(list);
+          return list;
+        });
       }
     },
-    [apply, busy, endpoint, push, undo, voice],
+    [apply, busy, endpoint, persist, push, undo, voice],
   );
 
   const toggleDictation = () => {
@@ -176,7 +214,9 @@ function Drawer({ onClose }: { onClose: () => void }) {
     stopSpeaking();
     messagesRef.current = [];
     nextId.current = 1;
-    setItems([{ id: 0, kind: 'cleo', text: WELCOME }]);
+    const fresh: Item[] = [{ id: 0, kind: 'cleo', text: WELCOME }];
+    setItems(fresh);
+    persist(fresh);
   };
 
   return (
@@ -197,10 +237,7 @@ function Drawer({ onClose }: { onClose: () => void }) {
       </div>
       {!endpoint ? (
         <div className="cleo-body">
-          <p>Para falar com a Cléo, a escala precisa estar na nuvem: ela usa o código da escala para saber que é você.</p>
-          <p>
-            Vá em <a href={href('ajustes')} onClick={onClose}>Ajustes, Sincronizar entre aparelhos</a>, crie ou entre com o código da escala e volte aqui.
-          </p>
+          <p>A Cléo precisa da nuvem e de uma conta. Saia e entre de novo com seu e-mail e senha.</p>
         </div>
       ) : (
         <>
@@ -210,6 +247,7 @@ function Drawer({ onClose }: { onClose: () => void }) {
                 {it.text}
               </div>
             ))}
+            {loadingHistory && <div className="cleo-msg hint">Buscando a conversa anterior...</div>}
             {busy && <div className="cleo-msg cleo thinking">Cléo está pensando...</div>}
           </div>
           <form

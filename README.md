@@ -28,15 +28,17 @@ O workflow `.github/workflows/deploy.yml` roda testes e build em todo push e pub
 
 Os dados ficam no `localStorage` do navegador. Em Ajustes dá para exportar e importar um backup JSON e voltar para a escala inicial (`src/data/seed.json`).
 
-## Sincronizar entre aparelhos (opcional)
+## Conta e nuvem (login)
 
-A escala pode ficar guardada na nuvem, no projeto Supabase "clientes-basicos" (plano gratuito, schema `escala_ceo`); qualquer computador ou celular com o "código da escala" vê e altera a mesma escala.
+O app pede e-mail e senha ao abrir. A escala fica guardada na conta, no projeto Supabase "clientes-basicos" (plano gratuito, schema `escala_ceo`): qualquer computador ou celular em que a pessoa entrar vê e altera a mesma escala. O `localStorage` continua sendo a cópia local (abre na hora e funciona sem internet; as mudanças sobem quando a conexão volta). Se dois aparelhos mudarem a escala ao mesmo tempo, o app pergunta qual versão vale e guarda a outra como cópia em Ajustes.
 
-- O endereço e a chave pública do projeto estão em `src/config/cloud.ts`. A chave pública vai para o navegador de qualquer jeito e só consegue chamar as três funções de `docs/supabase.sql`, que exigem o código; o código é o segredo. Para apontar para outro projeto, defina `VITE_SUPABASE_URL` e `VITE_SUPABASE_KEY` no build.
-- Para recriar o banco em outro projeto, rode `docs/supabase.sql` no SQL Editor.
-- No app, em Ajustes, "Sincronizar entre aparelhos": no primeiro aparelho, "Criar código novo e enviar esta escala" e anote o código; nos outros, "Entrar com o código".
+- Contas: só as criadas no painel do Supabase (Authentication, Users, "Add user", com "Auto confirm"). O cadastro aberto fica desligado (Authentication, Sign In / Providers, "Allow new users to sign up" off), então ninguém cria conta sozinho.
+- "Esqueci a senha" manda um e-mail com um link que volta para o site; para isso, em Authentication, URL Configuration, o Site URL precisa ser o endereço do site (https://pedrocobron-ops.github.io/escal-fran/). Quem cuida do app também pode definir uma senha nova pelo painel.
+- O endereço e a chave pública do projeto estão em `src/config/cloud.ts` (a chave pública vai para o navegador de qualquer jeito; o que protege a escala é o login). Para apontar para outro projeto, defina `VITE_SUPABASE_URL` e `VITE_SUPABASE_KEY` no build e rode `docs/supabase.sql` no SQL Editor.
+- Versão antiga do app usava um "código da escala": no primeiro login, o app traz o que estava no código para a conta (`minha_escala_importar_codigo`) e esquece o código.
+- Sem projeto configurado (build sem `src/config/cloud.ts` apontando para a nuvem), o app roda só local, sem login.
 
-Sem internet o app continua funcionando com a cópia local e envia as mudanças quando a conexão volta. Se dois aparelhos mudarem a escala ao mesmo tempo, vale a última gravação, e o outro aparelho recebe a versão nova com um aviso. No plano gratuito o Supabase pausa projetos sem uso por 7 dias; aí basta reativar no painel.
+No plano gratuito o Supabase pausa projetos sem uso por 7 dias; aí basta reativar no painel.
 
 ## Cléo, a assistente (opcional)
 
@@ -44,14 +46,14 @@ O botão "Cléo", no canto da tela, abre uma conversa: dá para perguntar como e
 
 Como funciona:
 
-- O app monta a conversa e manda para a função `cleo` do projeto Supabase (`supabase/functions/cleo/`), junto com o código da escala. A função confere o código e o limite diário (`public.cleo_autoriza`, tabela `escala_ceo.cleo_uso`, em `docs/supabase.sql`) e repassa à API da Anthropic com a chave guardada nos segredos do projeto. O navegador nunca vê a chave.
+- O app monta a conversa e manda para a função `cleo` do projeto Supabase (`supabase/functions/cleo/`), com o token da sessão da conta. A função confere a conta e o limite diário (`public.cleo_autoriza_usuario`, tabela `escala_ceo.cleo_uso`, em `docs/supabase.sql`) e repassa à API da Anthropic com a chave guardada nos segredos do projeto. O navegador nunca vê a chave.
 - As mudanças acontecem no próprio navegador, pelas mesmas funções das telas (`src/ai/tools.ts`): tudo pode ser desfeito pelo botão Desfazer. Remover algo ou limpar ajustes só acontece depois que a pessoa confirma na conversa.
-- Precisa de internet e de a escala estar na nuvem (Ajustes, Sincronizar entre aparelhos).
+- Precisa de internet e da conta (login). A conversa fica guardada na conta e continua em qualquer aparelho. Limite de 300 chamadas por dia por conta.
 
 Para ativar (uma vez), no painel do Supabase, projeto "clientes-basicos", Edge Functions, Secrets:
 
 - `ANTHROPIC_API_KEY`: chave criada em console.anthropic.com (API Keys), com crédito na conta.
 - `CLEO_MODEL` (opcional): modelo; padrão `claude-haiku-4-5-20251001`.
-- `CLEO_LIMITE_DIA` (opcional): chamadas por dia por código; padrão 300.
+- `CLEO_LIMITE_DIA` (opcional): chamadas por dia por conta; padrão 300.
 
 Para publicar a função de novo depois de mudar o código: `supabase functions deploy cleo --no-verify-jwt` (ou pelo MCP do Supabase).

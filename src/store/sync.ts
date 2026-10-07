@@ -1,18 +1,18 @@
-// Sincronização entre aparelhos pelo Supabase: o localStorage continua sendo a cópia
-// local (abre na hora, funciona sem internet) e a nuvem guarda uma linha por "código
-// da escala". Quem tem o código vê e altera a mesma escala em qualquer aparelho.
+// Sincronização pela nuvem (Supabase): o localStorage continua sendo a cópia local
+// (abre na hora, funciona sem internet) e a nuvem guarda uma escala por conta. Quem entra
+// com o e-mail e a senha da conta vê e altera a mesma escala em qualquer aparelho.
 
 import type { AppData } from '../domain';
 import { COPY_PREFIX, migrate, parseBackup, type LoadResult, type StorageAdapter } from './storage';
 import { CLOUD_PROJECT } from '../config/cloud';
 
+/** Configuração antiga (código da escala), só para importar o código para a conta. */
 export const SYNC_CONFIG_KEY = 'escala-ceo:sync';
 export const SYNC_META_KEY = 'escala-ceo:sync-meta';
 
-export interface SyncConfig {
+export interface CloudProject {
   url: string;
   key: string;
-  code: string;
 }
 
 interface SyncMeta {
@@ -28,6 +28,8 @@ export type SyncStatus =
   | { state: 'ok'; at: string }
   | { state: 'offline'; error: string }
   | { state: 'error'; error: string }
+  /** A sessão venceu: a pessoa precisa entrar de novo. */
+  | { state: 'sem-login' }
   /** A nuvem tem uma versão mais nova e este aparelho tem mudanças não enviadas: a pessoa decide. */
   | { state: 'conflict'; remoteAt: string };
 
@@ -35,35 +37,31 @@ export type SyncStatus =
  * Projeto Supabase do app: o de src/config/cloud.ts, ou o das variáveis de build
  * VITE_SUPABASE_URL e VITE_SUPABASE_KEY quando definidas (para apontar para outro projeto).
  */
-export function builtInProject(): { url: string; key: string } | null {
+export function builtInProject(): CloudProject | null {
   const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env ?? {};
   const url = env.VITE_SUPABASE_URL?.trim() || CLOUD_PROJECT.url;
   const key = env.VITE_SUPABASE_KEY?.trim() || CLOUD_PROJECT.key;
   return url && key ? { url, key } : null;
 }
 
-export function readSyncConfig(store: Storage = window.localStorage): SyncConfig | null {
+/** Código da escala guardado pela versão antiga do app neste navegador, se houver. */
+export function readLegacyCode(store: Storage = window.localStorage): string | null {
   try {
     const raw = store.getItem(SYNC_CONFIG_KEY);
     if (!raw) return null;
-    const v = JSON.parse(raw) as Partial<SyncConfig>;
-    const built = builtInProject();
-    const url = (v.url || built?.url || '').trim();
-    const key = (v.key || built?.key || '').trim();
-    const code = (v.code || '').trim();
-    return url && key && code ? { url, key, code } : null;
+    const v = JSON.parse(raw) as { code?: unknown };
+    return typeof v.code === 'string' && v.code.trim() ? v.code.trim().toLowerCase() : null;
   } catch {
     return null;
   }
 }
 
-export function writeSyncConfig(cfg: Partial<SyncConfig> | null, store: Storage = window.localStorage): void {
-  if (!cfg) {
+export function clearLegacyCode(store: Storage = window.localStorage): void {
+  try {
     store.removeItem(SYNC_CONFIG_KEY);
-    store.removeItem(SYNC_META_KEY);
-    return;
+  } catch {
+    // sem localStorage
   }
-  store.setItem(SYNC_CONFIG_KEY, JSON.stringify(cfg));
 }
 
 export function readSyncMeta(store: Storage): SyncMeta {
@@ -87,47 +85,46 @@ export function writeSyncMeta(meta: SyncMeta, store: Storage): void {
   }
 }
 
-/** Código novo, fácil de ditar: ceo-xxxx-xxxx-xxxx (sem letras e números parecidos). */
-export function newSyncCode(): string {
-  const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
-  const bytes = new Uint8Array(12);
-  crypto.getRandomValues(bytes);
-  const chars = [...bytes].map((b) => alphabet[b % alphabet.length]);
-  return `ceo-${chars.slice(0, 4).join('')}-${chars.slice(4, 8).join('')}-${chars.slice(8, 12).join('')}`;
-}
-
 /** Endereço do projeto com https:// e sem barra no fim. */
 export function normalizeUrl(url: string): string {
   const t = url.trim().replace(/\/+$/, '');
   return /^https?:\/\//i.test(t) ? t : `https://${t}`;
 }
 
-export function normalizeCode(text: string): string {
-  return text.trim().toLowerCase().replace(/\s+/g, '');
-}
-
 export class SyncError extends Error {
-  constructor(message: string, readonly offline = false, readonly conflict = false) {
+  constructor(message: string, readonly offline = false, readonly conflict = false, readonly auth = false) {
     super(message);
     this.name = 'SyncError';
   }
 }
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
+/** Devolve um token de acesso válido; com force, renova antes (depois de um 401). */
+export type TokenProvider = (force?: boolean) => Promise<string>;
 
-/** Chamadas às funções do Supabase (ver docs/supabase.sql). */
+/** Chamadas às funções do Supabase (ver docs/supabase.sql), sempre com a sessão da conta. */
 export class SupabaseRemote {
-  constructor(private readonly cfg: SyncConfig, private readonly fetchFn: FetchLike = (i, o) => fetch(i, o)) {}
+  constructor(
+    private readonly cfg: CloudProject,
+    private readonly token: TokenProvider,
+    private readonly fetchFn: FetchLike = (i, o) => fetch(i, o),
+  ) {}
 
-  private async rpc<T>(name: string, body: Record<string, unknown>, opts: { keepalive?: boolean; timeoutMs?: number } = {}): Promise<T> {
+  private async rpc<T>(name: string, body: Record<string, unknown>, opts: { keepalive?: boolean; timeoutMs?: number } = {}, retry = true): Promise<T> {
     const base = normalizeUrl(this.cfg.url);
+    let token: string;
+    try {
+      token = await this.token();
+    } catch (e) {
+      throw new SyncError(e instanceof Error ? e.message : 'Entre de novo.', false, false, true);
+    }
     const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : undefined;
     const timer = ctrl && opts.timeoutMs ? setTimeout(() => ctrl.abort(), opts.timeoutMs) : null;
     let res: Response;
     try {
       res = await this.fetchFn(`${base}/rest/v1/rpc/${name}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', apikey: this.cfg.key, Authorization: `Bearer ${this.cfg.key}` },
+        headers: { 'Content-Type': 'application/json', apikey: this.cfg.key, Authorization: `Bearer ${token}` },
         body: JSON.stringify(body),
         keepalive: opts.keepalive,
         signal: ctrl?.signal,
@@ -146,7 +143,19 @@ export class SupabaseRemote {
         // sem detalhe
       }
       if (/conflito/i.test(detail)) throw new SyncError('A nuvem tem uma versão mais nova.', false, true);
-      if (res.status === 401 || res.status === 403) throw new SyncError('A nuvem recusou a chave do projeto.');
+      if (res.status === 401) {
+        // Token vencido no meio do caminho: renova uma vez e repete.
+        if (retry) {
+          try {
+            await this.token(true);
+          } catch (e) {
+            throw new SyncError(e instanceof Error ? e.message : 'Entre de novo.', false, false, true);
+          }
+          return this.rpc<T>(name, body, opts, false);
+        }
+        throw new SyncError('Sua sessão venceu. Entre de novo.', false, false, true);
+      }
+      if (res.status === 403 || /sem login/i.test(detail)) throw new SyncError('A nuvem não reconheceu sua conta. Entre de novo.', false, false, true);
       if (res.status === 404) throw new SyncError('As funções da escala não existem nesse projeto (rode docs/supabase.sql).');
       if (res.status >= 500 || res.status === 429) throw new SyncError(`A nuvem está indisponível (${res.status}).`, true);
       throw new SyncError(detail ? `A nuvem recusou: ${detail}` : `A nuvem recusou a chamada (${res.status}).`);
@@ -159,16 +168,16 @@ export class SupabaseRemote {
     }
   }
 
-  /** Escala guardada no código, ou null se o código ainda não tem nada. */
+  /** Escala guardada na conta, ou null se a conta ainda não tem nada. */
   async get(timeoutMs = 8000): Promise<{ raw: string; updatedAt: string } | null> {
-    const rows = await this.rpc<Array<{ data: unknown; updated_at: string }>>('escala_get', { p_codigo: this.cfg.code }, { timeoutMs });
+    const rows = await this.rpc<Array<{ data: unknown; updated_at: string }>>('minha_escala_get', {}, { timeoutMs });
     const row = Array.isArray(rows) ? rows[0] : undefined;
     if (!row || row.data === null || row.data === undefined) return null;
     return { raw: JSON.stringify(row.data), updatedAt: row.updated_at };
   }
 
   async version(timeoutMs = 8000): Promise<string | null> {
-    const v = await this.rpc<string | null>('escala_version', { p_codigo: this.cfg.code }, { timeoutMs });
+    const v = await this.rpc<string | null>('minha_escala_version', {}, { timeoutMs });
     return typeof v === 'string' ? v : null;
   }
 
@@ -181,9 +190,24 @@ export class SupabaseRemote {
     // acima disso o envio normal é tentado, e, se não der tempo, a cópia local fica marcada
     // como pendente e sobe na próxima abertura.
     const keepalive = opts.keepalive && JSON.stringify(data).length < 60000;
-    const v = await this.rpc<string>('escala_put', { p_codigo: this.cfg.code, p_data: data, p_expected: opts.expected ?? null }, { timeoutMs: opts.timeoutMs ?? 15000, keepalive });
+    const v = await this.rpc<string>('minha_escala_put', { p_data: data, p_expected: opts.expected ?? null }, { timeoutMs: opts.timeoutMs ?? 15000, keepalive });
     if (typeof v !== 'string') throw new SyncError('A nuvem não confirmou a gravação.');
     return v;
+  }
+
+  /** Traz a escala de um código antigo para a conta (se a conta ainda estiver vazia). Devolve o updated_at da conta ou null. */
+  async importCode(code: string, timeoutMs = 8000): Promise<string | null> {
+    const v = await this.rpc<string | null>('minha_escala_importar_codigo', { p_codigo: code }, { timeoutMs });
+    return typeof v === 'string' ? v : null;
+  }
+
+  /** Conversa com a Cléo guardada na conta (o painel decide o formato). */
+  async conversaGet(timeoutMs = 8000): Promise<unknown> {
+    return this.rpc<unknown>('cleo_conversa_get', {}, { timeoutMs });
+  }
+
+  async conversaPut(payload: unknown, timeoutMs = 8000): Promise<void> {
+    await this.rpc<unknown>('cleo_conversa_put', { p_messages: payload }, { timeoutMs });
   }
 }
 
@@ -298,7 +322,8 @@ export class SyncedAdapter implements StorageAdapter {
 
   private fail(e: unknown) {
     const err = e instanceof SyncError ? e : new SyncError(e instanceof Error ? e.message : 'Erro ao sincronizar.');
-    this.onStatus(err.offline ? { state: 'offline', error: err.message } : { state: 'error', error: err.message });
+    if (err.auth) this.onStatus({ state: 'sem-login' });
+    else this.onStatus(err.offline ? { state: 'offline', error: err.message } : { state: 'error', error: err.message });
   }
 
   async load(): Promise<LoadResult> {

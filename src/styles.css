@@ -362,3 +362,10 @@ a { color: var(--accent); }
 @media print {
   .cleo-fab, .cleo-panel { display: none; }
 }
+
+/* Login */
+.login-wrap { min-height: calc(100vh - 60px); display: flex; align-items: flex-start; justify-content: center; padding: 48px 16px; }
+.login-card { width: 100%; max-width: 420px; }
+.login-card .field { margin-bottom: 12px; }
+.login-card input { width: 100%; }
+.btn.link { background: none; border: 0; color: var(--accent); padding: 6px 0; text-decoration: underline; cursor: pointer; }

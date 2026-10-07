@@ -1,12 +1,12 @@
 # Escala CEO
 
-Sistema de escala de ASBs e dentistas de um Centro de Especialidades Odontológicas. Site estático, sem login; dados no navegador, com sincronização opcional pela nuvem (Supabase, `src/store/sync.ts`, `docs/supabase.sql`). Fonte da verdade: `docs/SPEC.md`; pedidos do cliente depois da primeira versão: `docs/PEDIDOS.md`. Dúvidas em aberto com o cliente: `docs/PERGUNTAS.md` (não inventar respostas; manter a escala como está no `seed.json`).
+Sistema de escala de ASBs e dentistas de um Centro de Especialidades Odontológicas. Site estático com login (Supabase Auth, e-mail e senha, só contas criadas no painel); a escala fica na conta, com cópia local no navegador (`src/store/auth.ts`, `src/store/sync.ts`, `docs/supabase.sql`). Fonte da verdade: `docs/SPEC.md`; pedidos do cliente depois da primeira versão: `docs/PEDIDOS.md`. Dúvidas em aberto com o cliente: `docs/PERGUNTAS.md` (não inventar respostas; manter a escala como está no `seed.json`).
 
 ## Stack
 
 - Vite + React 19 + TypeScript (strict). Deploy no GitHub Pages via GitHub Actions (`vite build` com `base` igual ao nome do repositório).
 - Drag and drop: `@dnd-kit/core` + `@dnd-kit/sortable`.
-- Estado: Zustand com persistência em `localStorage` via `src/store/storage.ts`; `src/store/sync.ts` junta a cópia local com a nuvem (Supabase) quando há um código da escala. Exportar e importar backup JSON.
+- Estado: Zustand com persistência em `localStorage` via `src/store/storage.ts`; `src/store/sync.ts` junta a cópia local com a nuvem (Supabase) da conta logada. Exportar e importar backup JSON.
 - PDF: `@react-pdf/renderer`, A4 paisagem, legível em preto e branco.
 - Testes: Vitest, cobrindo `src/domain/` (lógica pura).
 
@@ -42,11 +42,12 @@ src/
     dates.ts        # helpers de data e semanas do mês
     schedule.ts     # effectiveDay, analyze
     tasks.ts        # taskHolder, rodízios, responsável fixo por período
-  store/            # zustand + storage.ts (localStorage) + sync.ts (nuvem opcional)
+  store/            # zustand + storage.ts (localStorage) + auth.ts (login) + sync.ts (nuvem da conta)
   ai/               # Cléo: ferramentas (tools.ts), prompt (context.ts), cliente e laço da conversa
   pdf/              # documentos @react-pdf/renderer
   ui/
     board/          # quadro drag and drop
+    auth/           # tela de login
     tasks/ absences/ team/ month/ settings/ cleo/
 tests/              # vitest para domain/
 supabase/functions/cleo/  # Edge Function que repassa à API da Anthropic (handler.ts puro, testado)

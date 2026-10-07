@@ -5,7 +5,7 @@ import type { AppData } from '../src/domain';
 import { DEFAULT_LUNCH_WINDOW, analyze, canLunchAt, effectiveDay, lunchWindowOf, resolveTask } from '../src/domain';
 import { baseEntriesAt, clearSchedule } from '../src/store/useStore';
 import { MemoryAdapter, parseBackup, repairBackup } from '../src/store/storage';
-import { SupabaseRemote, SyncedAdapter, newSyncCode, normalizeCode, type SyncStatus } from '../src/store/sync';
+import { SupabaseRemote, SyncedAdapter, type SyncStatus } from '../src/store/sync';
 import { keptAt, placeInBase, roomDropKind } from '../src/ui/board/placement';
 import { dayPdfModel, describeTaskHolder, monthPdfModel } from '../src/pdf/model';
 import { ID, absence, seed } from './helpers';
@@ -143,12 +143,13 @@ describe('pedido 3: sincronização pela nuvem', () => {
     const fetchFn = async (url: string, init?: RequestInit) => {
       const name = url.split('/rpc/')[1];
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
-      const code = String(body.p_codigo);
+      // A conta vem do token da sessão (aqui, o token é o próprio nome da conta).
+      const code = String((init?.headers as Record<string, string>).Authorization).replace('Bearer ', '');
       calls.push(name);
       const json = (v: unknown) => new Response(JSON.stringify(v), { status: 200, headers: { 'Content-Type': 'application/json' } });
-      if (name === 'escala_get') { const r = rows.get(code); return json(r ? [r] : []); }
-      if (name === 'escala_version') return json(rows.get(code)?.updated_at ?? null);
-      if (name === 'escala_put') { tick++; const at = `2026-10-07T10:00:${String(tick).padStart(2, '0')}Z`; rows.set(code, { data: body.p_data, updated_at: at }); return json(at); }
+      if (name === 'minha_escala_get') { const r = rows.get(code); return json(r ? [r] : []); }
+      if (name === 'minha_escala_version') return json(rows.get(code)?.updated_at ?? null);
+      if (name === 'minha_escala_put') { tick++; const at = `2026-10-07T10:00:${String(tick).padStart(2, '0')}Z`; rows.set(code, { data: body.p_data, updated_at: at }); return json(at); }
       return new Response('{"message":"no"}', { status: 404 });
     };
     return { rows, calls, fetchFn };
@@ -158,23 +159,25 @@ describe('pedido 3: sincronização pela nuvem', () => {
   it('primeiro aparelho sobe a escala; segundo aparelho recebe a mesma; mudança num aparece no outro', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const cloud = fakeCloud();
-    const cfg = { url: 'https://x.supabase.co', key: 'k', code: 'ceo-test-code-1' };
+    const cfg = { url: 'https://x.supabase.co', key: 'k' };
+    const conta = 'ceo-test-code-1';
+    const token = async () => conta;
     const statuses: SyncStatus[] = [];
     const storeA = new Map<string, string>();
     const lsA = { getItem: (k: string) => storeA.get(k) ?? null, setItem: (k: string, v: string) => void storeA.set(k, v), removeItem: (k: string) => void storeA.delete(k), key: () => null, length: 0, clear: () => storeA.clear() } as unknown as Storage;
     const localA = new MemoryAdapter();
     localA.raw = JSON.stringify(seed());
-    const a = new SyncedAdapter(localA, new SupabaseRemote(cfg, cloud.fetchFn), lsA, (s) => statuses.push(s), () => true);
+    const a = new SyncedAdapter(localA, new SupabaseRemote(cfg, token, cloud.fetchFn), lsA, (s) => statuses.push(s), () => true);
     const la = await a.load();
     expect(la.status).toBe('ok');
     await vi.advanceTimersByTimeAsync(50);
-    expect(cloud.rows.has(cfg.code)).toBe(true);
+    expect(cloud.rows.has(conta)).toBe(true);
 
     // segundo aparelho, vazio
     const storeB = new Map<string, string>();
     const lsB = { getItem: (k: string) => storeB.get(k) ?? null, setItem: (k: string, v: string) => void storeB.set(k, v), removeItem: (k: string) => void storeB.delete(k), key: () => null, length: 0, clear: () => storeB.clear() } as unknown as Storage;
     const localB = new MemoryAdapter();
-    const b = new SyncedAdapter(localB, new SupabaseRemote(cfg, cloud.fetchFn), lsB, () => undefined, () => true);
+    const b = new SyncedAdapter(localB, new SupabaseRemote(cfg, token, cloud.fetchFn), lsB, () => undefined, () => true);
     const lb = await b.load();
     expect(lb.status).toBe('ok');
     expect(lb.status === 'ok' && lb.data.asbs.length).toBe(7);
@@ -184,7 +187,7 @@ describe('pedido 3: sincronização pela nuvem', () => {
     changed.rules = ['REGRA NOVA'];
     await a.save(changed);
     await vi.advanceTimersByTimeAsync(2000);
-    expect((cloud.rows.get(cfg.code)!.data as AppData).rules).toEqual(['REGRA NOVA']);
+    expect((cloud.rows.get(conta)!.data as AppData).rules).toEqual(['REGRA NOVA']);
     let received: AppData | null = null;
     await b.check((d) => { received = d; });
     expect(received!.rules).toEqual(['REGRA NOVA']);
@@ -199,13 +202,15 @@ describe('pedido 3: sincronização pela nuvem', () => {
     let online = false;
     const cloud = fakeCloud();
     const fetchFn = async (url: string, init?: RequestInit) => { if (!online) throw new TypeError('Failed to fetch'); return cloud.fetchFn(url, init); };
-    const cfg = { url: 'https://x.supabase.co', key: 'k', code: 'ceo-test-code-2' };
+    const cfg = { url: 'https://x.supabase.co', key: 'k' };
+    const conta = 'ceo-test-code-2';
+    const token = async () => conta;
     const statuses: SyncStatus[] = [];
     const store = new Map<string, string>();
     const ls = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v), removeItem: (k: string) => void store.delete(k), key: () => null, length: 0, clear: () => store.clear() } as unknown as Storage;
     const local = new MemoryAdapter();
     local.raw = JSON.stringify(seed());
-    const a = new SyncedAdapter(local, new SupabaseRemote(cfg, fetchFn), ls, (s) => statuses.push(s), () => true);
+    const a = new SyncedAdapter(local, new SupabaseRemote(cfg, token, fetchFn), ls, (s) => statuses.push(s), () => true);
     const r = await a.load();
     expect(r.status).toBe('ok');
     expect(statuses.at(-1)).toEqual({ state: 'offline', error: 'Sem conexão com a nuvem.' });
@@ -218,17 +223,18 @@ describe('pedido 3: sincronização pela nuvem', () => {
     online = true;
     await a.check(() => undefined); // dirty: envia o local
     await vi.advanceTimersByTimeAsync(100);
-    expect((cloud.rows.get(cfg.code)!.data as AppData).rules).toEqual(['OFFLINE']);
+    expect((cloud.rows.get(conta)!.data as AppData).rules).toEqual(['OFFLINE']);
     expect(JSON.parse(store.get('escala-ceo:sync-meta')!).dirty).toBe(false);
     vi.useRealTimers();
     await flush();
   });
 
-  it('código novo é legível e a chave do projeto errada dá mensagem clara', async () => {
-    expect(newSyncCode()).toMatch(/^ceo-[a-z2-9]{4}-[a-z2-9]{4}-[a-z2-9]{4}$/);
-    expect(normalizeCode('  CEO-ABCD-EFGH-JKLM ')).toBe('ceo-abcd-efgh-jklm');
-    const remote = new SupabaseRemote({ url: 'https://x.supabase.co/', key: 'bad', code: 'ceo-aaaa-bbbb-cccc' }, async () => new Response('{"message":"Invalid API key"}', { status: 401 }));
-    await expect(remote.get()).rejects.toThrow(/recusou a chave/);
+  it('sessão recusada pela nuvem vira erro de login (depois de tentar renovar uma vez)', async () => {
+    let renewals = 0;
+    const token = async (force?: boolean) => { if (force) renewals++; return 'tok'; };
+    const remote = new SupabaseRemote({ url: 'https://x.supabase.co/', key: 'k' }, token, async () => new Response('{"message":"JWT expired"}', { status: 401 }));
+    await expect(remote.get()).rejects.toMatchObject({ auth: true });
+    expect(renewals).toBe(1);
   });
 });
 
@@ -284,11 +290,11 @@ describe('sincronização: conflito entre aparelhos', () => {
     const fetchFn = async (url: string, init?: RequestInit) => {
       const name = url.split('/rpc/')[1];
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
-      const code = String(body.p_codigo);
+      const code = String((init?.headers as Record<string, string>).Authorization).replace('Bearer ', '');
       const json = (v: unknown, status = 200) => new Response(JSON.stringify(v), { status, headers: { 'Content-Type': 'application/json' } });
-      if (name === 'escala_get') { const r = rows.get(code); return json(r ? [r] : []); }
-      if (name === 'escala_version') return json(rows.get(code)?.updated_at ?? null);
-      if (name === 'escala_put') {
+      if (name === 'minha_escala_get') { const r = rows.get(code); return json(r ? [r] : []); }
+      if (name === 'minha_escala_version') return json(rows.get(code)?.updated_at ?? null);
+      if (name === 'minha_escala_put') {
         const cur = rows.get(code);
         const expected = body.p_expected as string | null;
         if (cur && expected && cur.updated_at !== expected) return json({ message: 'conflito: a nuvem tem uma versao mais nova' }, 400);
@@ -306,25 +312,27 @@ describe('sincronização: conflito entre aparelhos', () => {
   it('aparelho parado com mudança pendente não apaga o trabalho do outro: vira conflito e a pessoa decide', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const c = cloud();
-    const cfg = { url: 'https://x.supabase.co', key: 'k', code: 'ceo-conf-lito-0001' };
+    const cfg = { url: 'https://x.supabase.co', key: 'k' };
+    const conta = 'ceo-conf-lito-0001';
+    const token = async () => conta;
     const statusA: SyncStatus[] = [];
     const lsA = mem(); const localA = new MemoryAdapter(); localA.raw = JSON.stringify(seed());
-    const a = new SyncedAdapter(localA, new SupabaseRemote(cfg, c.fetchFn), lsA, (s) => statusA.push(s), () => true);
+    const a = new SyncedAdapter(localA, new SupabaseRemote(cfg, token, c.fetchFn), lsA, (s) => statusA.push(s), () => true);
     await a.load();
     await vi.advanceTimersByTimeAsync(50);
     const lsB = mem(); const localB = new MemoryAdapter();
-    const b = new SyncedAdapter(localB, new SupabaseRemote(cfg, c.fetchFn), lsB, () => undefined, () => true);
+    const b = new SyncedAdapter(localB, new SupabaseRemote(cfg, token, c.fetchFn), lsB, () => undefined, () => true);
     await b.load();
     // B trabalha e envia
     const fromB = seed(); fromB.rules = ['DE B'];
     await b.save(fromB);
     await vi.advanceTimersByTimeAsync(2000);
-    expect((c.rows.get(cfg.code)!.data as AppData).rules).toEqual(['DE B']);
+    expect((c.rows.get(conta)!.data as AppData).rules).toEqual(['DE B']);
     // A (que não viu a versão de B) muda e tenta enviar
     const fromA = seed(); fromA.rules = ['DE A'];
     await a.save(fromA);
     await vi.advanceTimersByTimeAsync(2000);
-    expect((c.rows.get(cfg.code)!.data as AppData).rules).toEqual(['DE B']); // nada sobrescrito
+    expect((c.rows.get(conta)!.data as AppData).rules).toEqual(['DE B']); // nada sobrescrito
     expect(statusA.at(-1)?.state).toBe('conflict');
     // A decide usar a da nuvem: fica com DE B e a versão de A vira cópia
     let got: AppData | null = null;
@@ -336,27 +344,29 @@ describe('sincronização: conflito entre aparelhos', () => {
     const next = seed(); next.rules = ['DE A DEPOIS'];
     await a.save(next);
     await vi.advanceTimersByTimeAsync(2000);
-    expect((c.rows.get(cfg.code)!.data as AppData).rules).toEqual(['DE A DEPOIS']);
+    expect((c.rows.get(conta)!.data as AppData).rules).toEqual(['DE A DEPOIS']);
     vi.useRealTimers();
   });
 
   it('"manter a deste aparelho" grava por cima e guarda a da nuvem como cópia', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const c = cloud();
-    const cfg = { url: 'https://x.supabase.co', key: 'k', code: 'ceo-conf-lito-0002' };
+    const cfg = { url: 'https://x.supabase.co', key: 'k' };
+    const conta = 'ceo-conf-lito-0002';
+    const token = async () => conta;
     const lsA = mem(); const localA = new MemoryAdapter(); localA.raw = JSON.stringify(seed());
     const statusA: SyncStatus[] = [];
-    const a = new SyncedAdapter(localA, new SupabaseRemote(cfg, c.fetchFn), lsA, (s) => statusA.push(s), () => true);
+    const a = new SyncedAdapter(localA, new SupabaseRemote(cfg, token, c.fetchFn), lsA, (s) => statusA.push(s), () => true);
     await a.load();
     await vi.advanceTimersByTimeAsync(50);
     const other = seed(); other.rules = ['OUTRO'];
-    c.rows.set(cfg.code, { data: other, updated_at: '2026-10-07T11:00:00Z' }); // alguém gravou por fora
+    c.rows.set(conta, { data: other, updated_at: '2026-10-07T11:00:00Z' }); // alguém gravou por fora
     const mine = seed(); mine.rules = ['MINHA'];
     await a.save(mine);
     await vi.advanceTimersByTimeAsync(2000);
     expect(statusA.at(-1)?.state).toBe('conflict');
     await a.resolveConflict('mine', () => undefined);
-    expect((c.rows.get(cfg.code)!.data as AppData).rules).toEqual(['MINHA']);
+    expect((c.rows.get(conta)!.data as AppData).rules).toEqual(['MINHA']);
     expect(Object.values(localA.copies).some((raw) => (JSON.parse(raw) as AppData).rules[0] === 'OUTRO')).toBe(true);
     vi.useRealTimers();
   });
