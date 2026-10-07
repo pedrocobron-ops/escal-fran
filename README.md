@@ -30,10 +30,10 @@ Os dados ficam no `localStorage` do navegador. Em Ajustes dá para exportar e im
 
 ## Sincronizar entre aparelhos (opcional)
 
-Com um projeto no [Supabase](https://supabase.com) (plano gratuito serve), a escala fica guardada na nuvem e qualquer computador ou celular com o "código da escala" vê e altera a mesma escala.
+A escala pode ficar guardada na nuvem, no projeto Supabase "clientes-basicos" (plano gratuito, schema `escala_ceo`); qualquer computador ou celular com o "código da escala" vê e altera a mesma escala.
 
-1. No projeto, rode o SQL de `docs/supabase.sql` (SQL Editor). Ele cria a tabela e as três funções que o app usa; a chave pública (anon) só consegue chamar essas funções, e só quem sabe o código lê ou grava.
-2. Coloque o endereço e a chave pública do projeto no build, como segredos do repositório usados pelo workflow: `VITE_SUPABASE_URL` e `VITE_SUPABASE_KEY` (ou digite os dois em Ajustes, no primeiro aparelho).
-3. No app, em Ajustes, "Sincronizar entre aparelhos": "Criar código novo e enviar esta escala". Anote o código. Nos outros aparelhos, "Entrar com o código".
+- O endereço e a chave pública do projeto estão em `src/config/cloud.ts`. A chave pública vai para o navegador de qualquer jeito e só consegue chamar as três funções de `docs/supabase.sql`, que exigem o código; o código é o segredo. Para apontar para outro projeto, defina `VITE_SUPABASE_URL` e `VITE_SUPABASE_KEY` no build.
+- Para recriar o banco em outro projeto, rode `docs/supabase.sql` no SQL Editor.
+- No app, em Ajustes, "Sincronizar entre aparelhos": no primeiro aparelho, "Criar código novo e enviar esta escala" e anote o código; nos outros, "Entrar com o código".
 
 Sem internet o app continua funcionando com a cópia local e envia as mudanças quando a conexão volta. Se dois aparelhos mudarem a escala ao mesmo tempo, vale a última gravação, e o outro aparelho recebe a versão nova com um aviso. No plano gratuito o Supabase pausa projetos sem uso por 7 dias; aí basta reativar no painel.

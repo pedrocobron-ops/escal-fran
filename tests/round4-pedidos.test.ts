@@ -221,3 +221,12 @@ describe('pedido 3: sincronização pela nuvem', () => {
     await expect(remote.get()).rejects.toThrow(/recusou a chave/);
   });
 });
+
+describe('projeto da nuvem no código', () => {
+  it('o app já sabe o projeto clientes-basicos e aceita trocar por variáveis de build', async () => {
+    const { builtInProject } = await import('../src/store/sync');
+    const p = builtInProject();
+    expect(p?.url).toBe('https://pifuiczrytmizqxzygbi.supabase.co');
+    expect(p?.key.startsWith('eyJ')).toBe(true);
+  });
+});

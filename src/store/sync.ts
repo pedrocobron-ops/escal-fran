@@ -4,6 +4,7 @@
 
 import type { AppData } from '../domain';
 import { COPY_PREFIX, migrate, parseBackup, type LoadResult, type StorageAdapter } from './storage';
+import { CLOUD_PROJECT } from '../config/cloud';
 
 export const SYNC_CONFIG_KEY = 'escala-ceo:sync';
 export const SYNC_META_KEY = 'escala-ceo:sync-meta';
@@ -28,11 +29,14 @@ export type SyncStatus =
   | { state: 'offline'; error: string }
   | { state: 'error'; error: string };
 
-/** Projeto Supabase definido no build (variáveis VITE_SUPABASE_URL e VITE_SUPABASE_KEY). */
+/**
+ * Projeto Supabase do app: o de src/config/cloud.ts, ou o das variáveis de build
+ * VITE_SUPABASE_URL e VITE_SUPABASE_KEY quando definidas (para apontar para outro projeto).
+ */
 export function builtInProject(): { url: string; key: string } | null {
   const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env ?? {};
-  const url = env.VITE_SUPABASE_URL?.trim();
-  const key = env.VITE_SUPABASE_KEY?.trim();
+  const url = env.VITE_SUPABASE_URL?.trim() || CLOUD_PROJECT.url;
+  const key = env.VITE_SUPABASE_KEY?.trim() || CLOUD_PROJECT.key;
   return url && key ? { url, key } : null;
 }
 
