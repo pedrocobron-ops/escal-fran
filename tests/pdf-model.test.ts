@@ -15,8 +15,8 @@ describe('modelo do PDF do mês', () => {
   it('escala base diária das ASBs em texto corrido', () => {
     const pamela = m.asbRows.find((r) => r.name === 'Pâmela')!;
     expect(pamela.contract).toBe('07h–16h');
-    expect(pamela.morning).toBe('Sala 4 (Dra. Juliana, 07h–11h), Sala 4 (Dr. Marco, 12h–13h)');
-    expect(pamela.lunch).toBe('11h–12h');
+    expect(pamela.morning).toBe('Sala 4 (Dra. Juliana, 07h–11h), Apoio / Recepção (11h–12h), Sala 4 (Dr. Marco, 12h–13h)');
+    expect(pamela.lunch).toBe('sem bloco'); // o almoço das 11h não existe mais; o horário dela está em aberto (PERGUNTAS.md, item 4)
     expect(pamela.afternoon).toBe('Sala 4 (Dr. Marco, 13h–15h), Apoio / Recepção (15h–16h)');
     const andrea = m.asbRows.find((r) => r.name === 'Andrea')!;
     expect(andrea.lunch).toBe('não sai');
@@ -70,11 +70,11 @@ describe('modelo do PDF do dia', () => {
     expect(m.columns).toEqual(['Sala 1', 'Sala 2', 'Sala 3', 'Sala 4', 'Apoio / Recepção', 'CME / Arsenal', 'Almoxarifado', 'Almoço']);
     expect(m.rows[1].cells[0].asb).toBe('ASB: Carla (externa)');
     expect(m.rows[0].cells[5].asb).toBe('Carla (externa)');
-    expect(m.rows[4].cells[7].asb).toBe('Pâmela');
+    expect(m.rows[4].cells[4].asb).toContain('Pâmela'); // 11h: apoio
     const cme = m.tasks.find((t) => t.task.startsWith('CME / Arsenal (manhã)'))!;
     expect(cme.holder).toBe('Carla (externa)');
     expect(m.tasks.some((t) => t.task === 'Drenar compressor')).toBe(false); // segunda
-    expect(m.alerts).toEqual(['CRÍTICO: Sala 2 às 18h: Dr. Edson atendendo sem ASB.']);
+    expect('alerts' in m).toBe(false); // alertas só na tela, não no PDF
   });
 
   it('dia fechado', () => {
@@ -106,9 +106,8 @@ describe('PDF com folga de dentista e hora extra', () => {
     const day = dayPdfModel(d, '2026-09-14');
     expect(day.notes).toEqual(['Dra. Victoria de folga (Folga), Sala 3 07h–11h.', 'Nicélia faz hora extra 10h–13h (cobre Laura).']);
     expect(day.rows[1].cells[2]).toEqual({ dentist: 'Dra. Victoria de folga', asb: '' });
-    expect(day.rows[1].cells[0].asb).toBe('ASB: Andrea (remanejada)');
-    expect(day.rows[3].cells[0].asb).toBe('ASB: Andrea (remanejada)');
-    expect(day.alerts.some((a) => a.startsWith('Info: Andrea remanejada da Sala 3 para a Sala 1'))).toBe(true);
+    expect(day.rows[1].cells[0].asb).toBe('ASB: Andrea'); // só o nome no quadro impresso
+    expect(day.rows[3].cells[0].asb).toBe('ASB: Andrea');
   });
 });
 

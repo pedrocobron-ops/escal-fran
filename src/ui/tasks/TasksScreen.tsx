@@ -3,7 +3,7 @@ import { DndContext, KeyboardSensor, MouseSensor, TouchSensor, closestCenter, us
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { Asb, Person, Task, TaskMode, TaskResolution } from '../../domain';
-import { WEEKDAY_LABEL, WEEKDAY_SHORT, dataForDate, findAsbAnywhere, formatDate, formatHour, resolveTask, rotationTitular, todayIso, weekdayOf } from '../../domain';
+import { WEEKDAY_LABEL, WEEKDAY_SHORT, dataForDate, findAsbAnywhere, firstOfMonth, formatDate, formatHour, isValidIso, lastOfMonth, resolveTask, rotationTitular, todayIso, weekdayOf } from '../../domain';
 import { newId, useData, useStore } from '../../store/useStore';
 import { colorMap } from '../colors';
 import { Modal, useConfirm } from '../common/Modal';
@@ -101,6 +101,7 @@ function TaskCard({ task, date, colors, readOnly, onEdit, onRemove }: { task: Ta
           </>
         )}
       </div>
+      {!readOnly && <PeriodHolders task={task} colors={colors} />}
       {a.mode === 'rotation' && readOnly && (
         <p className="muted small" style={{ marginTop: 8 }}>
           Ordem nesse dia: {a.order.map((id) => findAsbAnywhere(current, id)?.name ?? '?').join(', ')}.
@@ -175,6 +176,90 @@ function RotationEditor({ task, assignment, date, colors, onChange }: { task: Ta
               <option key={a.id} value={a.id}>{a.name}</option>
             ))}
           </select>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Alguém fixa na tarefa durante um período (pedido do cliente: "deixar uma pessoa na
+ * conferência de prótese o mês inteiro"). Vale acima da regra normal nas datas que cobre.
+ */
+function PeriodHolders({ task, colors }: { task: Task; colors: Map<string, string> }) {
+  const data = useData();
+  const apply = useStore((s) => s.apply);
+  const [open, setOpen] = useState(false);
+  const [asbId, setAsbId] = useState(data.asbs.find((a) => a.active)?.id ?? '');
+  const today = todayIso();
+  const [from, setFrom] = useState(firstOfMonth(Number(today.slice(0, 4)), Number(today.slice(5, 7))));
+  const [to, setTo] = useState(lastOfMonth(Number(today.slice(0, 4)), Number(today.slice(5, 7))));
+  const [error, setError] = useState<string | null>(null);
+  const list = [...(task.holdersByPeriod ?? [])].sort((a, b) => a.from.localeCompare(b.from));
+  const name = (id: string) => findAsbAnywhere(data, id)?.name ?? '?';
+  const month = (shift: number) => {
+    const y = Number(today.slice(0, 4));
+    const m = Number(today.slice(5, 7)) + shift;
+    const yy = y + Math.floor((m - 1) / 12);
+    const mm = ((m - 1) % 12) + 1;
+    setFrom(firstOfMonth(yy, mm));
+    setTo(lastOfMonth(yy, mm));
+  };
+  const save = () => {
+    if (!asbId) return setError('Escolha a ASB.');
+    if (!isValidIso(from) || !isValidIso(to) || to < from) return setError('Confira as datas.');
+    const clash = list.find((h) => h.from <= to && h.to >= from);
+    if (clash) return setError(`Já existe responsável fixa nesse período (${name(clash.asbId)}, ${formatDate(clash.from)} a ${formatDate(clash.to)}). Remova antes.`);
+    apply((d) => {
+      const t = d.tasks.find((x) => x.id === task.id);
+      if (t) t.holdersByPeriod = [...(t.holdersByPeriod ?? []), { id: newId('fx'), asbId, from, to }];
+    });
+    setError(null);
+    setOpen(false);
+  };
+  const remove = (id: string) => apply((d) => {
+    const t = d.tasks.find((x) => x.id === task.id);
+    if (t) t.holdersByPeriod = (t.holdersByPeriod ?? []).filter((h) => h.id !== id);
+  });
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div className="muted small" style={{ marginBottom: 4 }}>Responsável fixo por período (vale acima da regra acima nessas datas)</div>
+      {list.length > 0 && (
+        <ul className="plain-list">
+          {list.map((h) => (
+            <li key={h.id} className={h.from <= today && today <= h.to ? 'current' : undefined}>
+              <span>
+                <span className="chip static" style={{ background: colors.get(h.asbId) ?? '#555' }}>{name(h.asbId)}</span>{' '}
+                <span className="mono">{formatDate(h.from)} a {formatDate(h.to)}</span>
+                {h.to < today && <span className="muted small"> (já passou)</span>}
+              </span>
+              <button className="btn sm" onClick={() => remove(h.id)}>Remover</button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {!open ? (
+        <button className="btn sm" onClick={() => setOpen(true)}>Fixar alguém num período</button>
+      ) : (
+        <div className="card" style={{ padding: 10 }}>
+          <div className="field-row">
+            <Field label="ASB">
+              <select value={asbId} onChange={(e) => setAsbId(e.target.value)}>
+                {data.asbs.filter((a) => a.active).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </Field>
+            <Field label="De"><DateInput value={from} onChange={(v) => { setFrom(v); if (v > to) setTo(v); }} ariaLabel="Início do período" /></Field>
+            <Field label="Até"><DateInput value={to} onChange={setTo} min={from} ariaLabel="Fim do período" /></Field>
+          </div>
+          <div className="toolbar" style={{ marginBottom: 6 }}>
+            <button className="btn sm" onClick={() => month(0)}>Este mês</button>
+            <button className="btn sm" onClick={() => month(1)}>Mês que vem</button>
+          </div>
+          {error && <p className="error">{error}</p>}
+          <div className="toolbar" style={{ marginBottom: 0 }}>
+            <button className="btn sm" onClick={() => { setOpen(false); setError(null); }}>Cancelar</button>
+            <button className="btn sm primary" onClick={save}>Fixar</button>
+          </div>
         </div>
       )}
     </div>

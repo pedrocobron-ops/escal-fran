@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { WEEKDAY_LABEL, diffDays, formatDate, isValidIso, todayIso, weekdayOf } from '../../domain';
+import { HOURS, WEEKDAY_LABEL, diffDays, formatDate, formatHour, isValidIso, lunchWindowOf, todayIso, weekdayOf } from '../../domain';
+import { SupabaseRemote, SyncError, builtInProject, newSyncCode, normalizeCode, readSyncConfig, writeSyncConfig, writeSyncMeta } from '../../store/sync';
 import { BackupError, backupFileName, exportBackup, parseBackup } from '../../store/storage';
 import { useData, useStore } from '../../store/useStore';
 import { Modal, Notice, useConfirm } from '../common/Modal';
@@ -56,6 +57,12 @@ export function SettingsScreen() {
     if (!exported) return;
     return () => URL.revokeObjectURL(exported.url);
   }, [exported]);
+
+  const lw = lunchWindowOf(data);
+  const setLunch = (start: number, end: number) => {
+    if (end <= start) return;
+    apply((x) => { x.lunchWindow = { start, end }; });
+  };
 
   const toggleDay = (d: number) => {
     apply((x) => {
@@ -116,7 +123,29 @@ export function SettingsScreen() {
         </div>
       </section>
 
+      <section className="card">
+        <h2>Horário de almoço</h2>
+        <p className="muted small">O bloco de almoço só pode ser marcado dentro deste horário. Fora dele o quadro não aceita a ficha na coluna Almoço e avisa.</p>
+        <div className="field-row">
+          <div className="field">
+            <label>De</label>
+            <select value={lw.start} onChange={(e) => setLunch(Number(e.target.value), lw.end)}>
+              {HOURS.map((h) => <option key={h} value={h}>{formatHour(h)}</option>)}
+            </select>
+          </div>
+          <div className="field">
+            <label>Até</label>
+            <select value={lw.end} onChange={(e) => setLunch(lw.start, Number(e.target.value))}>
+              {HOURS.map((h) => h + 1).map((h) => <option key={h} value={h}>{formatHour(h)}</option>)}
+            </select>
+          </div>
+        </div>
+        <p className="small muted">Blocos de almoço permitidos: {HOURS.filter((h) => h >= lw.start && h < lw.end).map((h) => `${formatHour(h)}–${formatHour(h + 1)}`).join(', ') || 'nenhum'}.</p>
+      </section>
+
       <ClosedDates />
+
+      <SyncSection />
 
       <section className="card">
         <h2>Backup</h2>
@@ -234,6 +263,166 @@ function ClosedDates() {
       )}
       {list.some((c) => c.date < today) && (
         <button className="btn sm" onClick={() => setShowPast((v) => !v)}>{showPast ? 'Esconder datas passadas' : 'Mostrar datas passadas'}</button>
+      )}
+    </section>
+  );
+}
+
+/** Sincronização entre aparelhos pela nuvem (Supabase), com um "código da escala". */
+function SyncSection() {
+  const data = useData();
+  const status = useStore((s) => s.syncStatus);
+  const confirm = useConfirm();
+  const cfg = readSyncConfig();
+  const built = builtInProject();
+  const [url, setUrl] = useState(cfg?.url ?? built?.url ?? '');
+  const [key, setKey] = useState(cfg?.key ?? built?.key ?? '');
+  const [codeText, setCodeText] = useState('');
+  const [busy, setBusy] = useState<'create' | 'join' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [created, setCreated] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const ready = url.trim() !== '' && key.trim() !== '';
+
+  const restart = () => {
+    useStore.getState().flush();
+    setTimeout(() => window.location.reload(), 150);
+  };
+
+  const create = async () => {
+    if (!ready) return setError('Informe o endereço e a chave do projeto.');
+    setBusy('create');
+    setError(null);
+    try {
+      const code = newSyncCode();
+      const remote = new SupabaseRemote({ url: url.trim(), key: key.trim(), code });
+      const at = await remote.put(data);
+      writeSyncConfig({ ...(built && built.url === url.trim() && built.key === key.trim() ? {} : { url: url.trim(), key: key.trim() }), code });
+      writeSyncMeta({ remoteAt: at, dirty: false }, window.localStorage);
+      setCreated(code);
+    } catch (e) {
+      setError(e instanceof SyncError ? e.message : 'Não foi possível enviar a escala para a nuvem.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const join = async () => {
+    const code = normalizeCode(codeText);
+    if (!ready) return setError('Informe o endereço e a chave do projeto.');
+    if (code.length < 8) return setError('Digite o código da escala (ex.: ceo-xxxx-xxxx-xxxx).');
+    setBusy('join');
+    setError(null);
+    try {
+      const remote = new SupabaseRemote({ url: url.trim(), key: key.trim(), code });
+      const found = await remote.get();
+      if (!found) {
+        setError('Esse código não tem nenhuma escala guardada. Confira o código no outro aparelho (Ajustes, Sincronizar entre aparelhos).');
+        return;
+      }
+      const ok = await confirm({
+        title: 'Usar a escala da nuvem?',
+        message: 'A escala deste aparelho será substituída pela que está na nuvem com esse código. Uma cópia do que está aqui fica guardada no navegador e você pode exportar um backup antes.',
+        confirmLabel: 'Usar a escala da nuvem',
+      });
+      if (!ok) return;
+      writeSyncConfig({ ...(built && built.url === url.trim() && built.key === key.trim() ? {} : { url: url.trim(), key: key.trim() }), code });
+      writeSyncMeta({ remoteAt: null, dirty: false }, window.localStorage);
+      restart();
+    } catch (e) {
+      setError(e instanceof SyncError ? e.message : 'Não foi possível consultar a nuvem.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const disable = async () => {
+    const ok = await confirm({
+      title: 'Desligar a sincronização?',
+      message: 'Este aparelho passa a guardar só a cópia local. O que já está na nuvem continua lá para os outros aparelhos.',
+      confirmLabel: 'Desligar',
+      danger: true,
+    });
+    if (!ok) return;
+    writeSyncConfig(null);
+    restart();
+  };
+
+  const copy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  const statusText =
+    status.state === 'ok' ? `Sincronizado com a nuvem às ${status.at}.`
+    : status.state === 'syncing' ? 'Sincronizando...'
+    : status.state === 'offline' ? `Sem conexão com a nuvem (${status.error}). As mudanças ficam guardadas aqui e sobem quando a conexão voltar.`
+    : status.state === 'error' ? `Problema na nuvem: ${status.error}`
+    : '';
+
+  return (
+    <section className="card">
+      <h2>Sincronizar entre aparelhos</h2>
+      {cfg ? (
+        <>
+          <p className="small">
+            Ligada. Tudo o que você muda aqui vai para a nuvem e aparece nos outros aparelhos que usam o mesmo código.
+          </p>
+          <p className={`note ${status.state === 'ok' ? 'ok' : status.state === 'offline' ? 'warn' : status.state === 'error' ? 'bad' : ''}`}>{statusText}</p>
+          <p className="small">
+            Código desta escala: <strong className="mono">{cfg.code}</strong>{' '}
+            <button className="btn sm" onClick={() => copy(cfg.code)}>{copied ? 'Copiado' : 'Copiar'}</button>
+          </p>
+          <p className="muted small">Em outro computador ou celular, abra o app, vá em Ajustes, Sincronizar entre aparelhos, e digite esse código.</p>
+          <div className="toolbar" style={{ marginBottom: 0 }}>
+            <button className="btn" onClick={restart}>Sincronizar agora</button>
+            <button className="btn danger" onClick={disable}>Desligar neste aparelho</button>
+          </div>
+        </>
+      ) : created ? (
+        <div className="note ok">
+          <p><strong>Escala enviada para a nuvem.</strong> Anote o código: ele é a senha da escala.</p>
+          <p>
+            <strong className="mono" style={{ fontSize: 16 }}>{created}</strong>{' '}
+            <button className="btn sm" onClick={() => copy(created)}>{copied ? 'Copiado' : 'Copiar'}</button>
+          </p>
+          <p className="small">Nos outros aparelhos: Ajustes, Sincronizar entre aparelhos, "Entrar com um código".</p>
+          <button className="btn primary" onClick={restart}>Continuar</button>
+        </div>
+      ) : (
+        <>
+          <p className="muted small">
+            Desligada: os dados ficam só neste aparelho. Ligando, a escala fica guardada na nuvem e qualquer computador ou celular com o código vê e altera a mesma escala.
+          </p>
+          {!built && (
+            <details style={{ marginBottom: 8 }} open={!ready}>
+              <summary className="small">Projeto na nuvem (Supabase)</summary>
+              <div className="field-row">
+                <div className="field"><label>Endereço do projeto (URL)</label><input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://xxxx.supabase.co" /></div>
+                <div className="field"><label>Chave pública (anon)</label><input value={key} onChange={(e) => setKey(e.target.value)} /></div>
+              </div>
+              <p className="muted small">As funções do banco estão em docs/supabase.sql no repositório.</p>
+            </details>
+          )}
+          <div className="toolbar" style={{ marginBottom: 8 }}>
+            <button className="btn primary" onClick={create} disabled={busy !== null || !ready}>{busy === 'create' ? 'Enviando...' : 'Criar código novo e enviar esta escala'}</button>
+          </div>
+          <div className="field-row" style={{ alignItems: 'flex-end' }}>
+            <div className="field" style={{ flex: '1 1 220px' }}>
+              <label>Já tem um código de outro aparelho?</label>
+              <input value={codeText} onChange={(e) => setCodeText(e.target.value)} placeholder="ceo-xxxx-xxxx-xxxx" />
+            </div>
+            <div className="field" style={{ flex: '0 0 auto' }}>
+              <button className="btn" onClick={join} disabled={busy !== null || !ready}>{busy === 'join' ? 'Procurando...' : 'Entrar com o código'}</button>
+            </div>
+          </div>
+          {error && <p className="error">{error}</p>}
+        </>
       )}
     </section>
   );

@@ -13,8 +13,9 @@ export interface Placement {
   asbId: string;
   hours: number[];
   target: CellTarget;
-  /** Continua nas outras salas dessas horas (cobrir duas salas). */
-  additive: boolean;
+  /** Continua nas outras salas dessas horas (apoio de uma sala enquanto é ASB de outra). */
+  keepOthers: boolean;
+  /** Ficha arrastada do quadro: sai de onde estava. */
   orig?: Origin;
 }
 
@@ -22,32 +23,32 @@ export const sameTarget = (a: CellTarget, b: CellTarget) => a.kind === b.kind &&
 export const isRoomEntry = (x: CellTarget) => !!x.roomId && (x.kind === 'sala' || x.kind === 'apoio');
 
 /**
- * O que a ASB mantém na hora `h`, além do destino. Sem `additive`, ela sai do que fazia;
- * com `additive`, continua nas outras salas. Numa ficha movida, na hora de onde ela saiu
- * só aquela ficha muda: os outros lugares da ASB nessa hora ficam como estavam.
+ * Como a ASB entra numa sala (pedido do cliente: nunca pergunta, sempre cabem duas por célula):
+ * ASB da sala quando a sala está livre e ela não está em outra sala nessa hora;
+ * senão entra de apoio e continua onde estava.
  */
-export function keptAt(p: Placement, h: number, current: CellTarget[]): CellTarget[] {
-  const { target } = p;
-  const orig = originOf(p);
-  const origT: CellTarget | undefined = orig ? { kind: orig.kind, roomId: orig.roomId } : undefined;
-  const rest = current.filter((e) => !sameTarget(e, target) && !(origT && orig && h === orig.hour && sameTarget(e, origT)));
-  if (orig && h === orig.hour) return rest;
-  if (!p.additive || !isRoomEntry(target)) return [];
-  return rest.filter((e) => isRoomEntry(e) && e.roomId !== target.roomId);
+export function roomDropPlan(roomHasAsb: boolean, inAnotherRoom: boolean): { kind: 'sala' | 'apoio'; keepOthers: boolean } {
+  return roomHasAsb || inAnotherRoom ? { kind: 'apoio', keepOthers: true } : { kind: 'sala', keepOthers: false };
 }
 
 /**
- * "Cobrir as duas" (additive) é copiar: a ficha arrastada continua onde estava.
- * Nos outros casos, a ficha arrastada sai do lugar de origem.
+ * O que a ASB mantém na hora `h`, além do destino. A ficha arrastada do quadro sai de onde
+ * estava; sem `keepOthers`, ela sai de tudo o que fazia nessa hora (exceto, ao trocar a
+ * própria ficha de lugar na mesma hora, os outros lugares dela, que ficam); com
+ * `keepOthers`, continua nas outras salas.
  */
-function originOf(p: Placement): Origin | undefined {
-  return p.additive ? undefined : p.orig;
+export function keptAt(p: Placement, h: number, current: CellTarget[]): CellTarget[] {
+  const { target, orig } = p;
+  const origT: CellTarget | undefined = orig && h === orig.hour ? { kind: orig.kind, roomId: orig.roomId } : undefined;
+  const rest = current.filter((e) => !sameTarget(e, target) && !(origT && sameTarget(e, origT)));
+  if (p.keepOthers) return rest.filter((e) => isRoomEntry(e) && e.roomId !== target.roomId);
+  if (origT) return rest;
+  return [];
 }
 
 /** Aplica na escala base. */
 export function placeInBase(d: AppData, p: Placement): void {
-  const { asbId, hours, target } = p;
-  const orig = originOf(p);
+  const { asbId, hours, target, orig } = p;
   if (orig && !hours.includes(orig.hour)) removeSlotAt(d, asbId, orig.hour, orig.kind, orig.roomId);
   for (const h of hours) setBaseAt(d, asbId, h, [...keptAt(p, h, baseEntriesAt(d, asbId, h)), target]);
 }
@@ -57,8 +58,7 @@ export function placeInBase(d: AppData, p: Placement): void {
  * efetivo (antes da mudança); `hold` marca que o app não deve remanejá-la ali.
  */
 export function placeInDay(d: AppData, date: IsoDate, p: Placement, entriesAt: (hour: number) => CellTarget[], hold: boolean): void {
-  const { asbId, hours, target } = p;
-  const orig = originOf(p);
+  const { asbId, hours, target, orig } = p;
   if (orig && !hours.includes(orig.hour)) {
     const origT: CellTarget = { kind: orig.kind, roomId: orig.roomId };
     setDaySlots(d, date, asbId, [orig.hour], entriesAt(orig.hour).filter((e) => !sameTarget(e, origT)), { hold });

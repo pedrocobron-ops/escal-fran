@@ -180,7 +180,7 @@ export function AbsencesScreen() {
           )}
           {tab === 'extra' && (
             extras.length === 0 ? (
-              <p className="card muted">Nenhuma hora extra {allMonths ? 'cadastrada' : 'neste mês'}. Cadastre aqui os dias em que uma ASB entra mais cedo ou sai mais tarde. No Modo Dia do quadro ela pode ser colocada nesses horários, e o app a usa sozinho para cobrir sala, CME ou almoxarifado sem ninguém.</p>
+              <p className="card muted">Nenhuma hora extra {allMonths ? 'cadastrada' : 'neste mês'}. Cadastre aqui os dias em que uma ASB entra mais cedo ou sai mais tarde. Na escala da semana do quadro ela pode ser colocada nesses horários, e o app a usa sozinho para cobrir sala, CME ou almoxarifado sem ninguém.</p>
             ) : (
               <div className="table-wrap">
                 <table className="table responsive">
@@ -353,7 +353,7 @@ export function MonthCalendar({ ym, data, colors }: { ym: YearMonth; data: AppDa
         const problem = inMonth && problems.has(iso);
         const cls = `day${closed ? ' closed' : ''}${inMonth ? '' : ' other'}${problem ? ' problem' : ''}`;
         if (!inMonth) return <div key={iso} className={cls}><span className="n">{Number(iso.slice(8))}</span></div>;
-        // Tocar num dia abre o Modo Dia do Quadro nessa data, com tudo o que muda nele.
+        // Tocar num dia abre a escala da semana do Quadro nessa data, com tudo o que muda nele.
         return (
           <a
             key={iso}
@@ -533,7 +533,7 @@ function AbsenceForm({ absence, onClose, onSave }: { absence?: Absence; onClose:
         <div>
           <div className="muted small">Sugestões de cobertura ({total} bloco{total > 1 ? 's' : ''} de sala, CME ou almoxarifado no período). Toque para escolher:</div>
           {useful.length === 0 ? (
-            <div className="note warn">Ninguém da equipe está livre nesses horários. Cadastre uma pessoa de fora ou ajuste o Modo Dia.</div>
+            <div className="note warn">Ninguém da equipe está livre nesses horários. Cadastre uma pessoa de fora ou ajuste na escala da semana.</div>
           ) : (
             <div className="suggest">
               {useful.slice(0, 5).map((s) => (
@@ -597,7 +597,7 @@ function AbsenceForm({ absence, onClose, onSave }: { absence?: Absence; onClose:
         ) : (
           <div className="note bad">
             Continua sem ninguém: {remaining.slice(0, 8).map((r) => `${formatDayMonth(r.date)} ${groupHours(r.hours).map(([a, b]) => formatRange(a, b)).join(', ')}`).join('; ')}
-            {remaining.length > 8 ? ` e mais ${remaining.length - 8} dias` : ''}. Para cobrir o resto, arraste outra ASB no Modo Dia desses dias.
+            {remaining.length > 8 ? ` e mais ${remaining.length - 8} dias` : ''}. Para cobrir o resto, arraste outra ASB na escala da semana, nesses dias.
           </div>
         )
       )}
@@ -813,7 +813,7 @@ function DentistAbsenceForm({ absence, onClose, onSave }: { absence?: DentistAbs
               ))}
             </ul>
             {preview.total > preview.lines.length && (
-              <span className="small muted">E mais {preview.total - preview.lines.length} dia(s). Veja cada um no Modo Dia do Quadro.</span>
+              <span className="small muted">E mais {preview.total - preview.lines.length} dia(s). Veja cada um na escala da semana do Quadro.</span>
             )}
           </div>
         )

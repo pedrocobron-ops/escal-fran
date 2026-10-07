@@ -41,13 +41,13 @@ describe('desfazer importação ou volta à escala inicial', () => {
   });
 });
 
-describe('quadro: cobrir as duas com ficha arrastada do quadro', () => {
-  it('a ficha arrastada continua onde estava', () => {
+describe('quadro: ficha arrastada do quadro move; da lista, acrescenta', () => {
+  it('a ficha arrastada de outra hora sai de onde estava', () => {
     const d = seed();
-    // Laura: Sala 1 às 09h e 10h. Arrasta a ficha das 09h para a Sala 2 às 10h, "Cobrir as duas".
-    placeInBase(d, { asbId: ID.laura, hours: [10], target: { kind: 'sala', roomId: 's2' }, additive: true, orig: { hour: 9, kind: 'sala', roomId: 's1' } });
-    expect(baseEntriesAt(d, ID.laura, 9).map((e) => e.roomId)).toEqual(['s1']);
-    expect(baseEntriesAt(d, ID.laura, 10).map((e) => e.roomId).sort()).toEqual(['s1', 's2']);
+    // Laura: Sala 1 às 09h e 10h. Arrasta a ficha das 09h para a Sala 2 às 10h (vira apoio, pois está na Sala 1 às 10h).
+    placeInBase(d, { asbId: ID.laura, hours: [10], target: { kind: 'apoio', roomId: 's2' }, keepOthers: true, orig: { hour: 9, kind: 'sala', roomId: 's1' } });
+    expect(baseEntriesAt(d, ID.laura, 9).map((e) => e.roomId)).toEqual([]);
+    expect(baseEntriesAt(d, ID.laura, 10).map((e) => `${e.kind}:${e.roomId}`).sort()).toEqual(['apoio:s2', 'sala:s1']);
   });
 });
 

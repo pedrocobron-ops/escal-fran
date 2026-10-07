@@ -1,11 +1,12 @@
 // Responsável por tarefa numa data (5.3) e rodízios por mês (5.4).
 
-import type { AppData, EffectiveDay, Id, IsoDate, Person, Task, TaskMode } from './types';
+import type { AppData, EffectiveDay, Id, IsoDate, PeriodHolder, Person, Task, TaskMode } from './types';
 import { lastOfMonth, mod, monthsSince, todayIso, weekdayOf, weeksOfMonth, weeksSince, type MonthWeek } from './dates';
 import { absenceFor, isExternalSubstitute, isTeamSubstitute } from './absences';
 import { effectiveDay, isOpenOn } from './schedule';
 import { dataForDate } from './history';
 import { formatHour, formatRange, groupHours } from './time';
+import { formatDate } from './dates';
 
 export type RotationAssignment = Extract<TaskMode, { mode: 'rotation' }>;
 
@@ -94,6 +95,27 @@ export function resolveTask(current: AppData, taskNow: Task, date: IsoDate, day?
   if (!isOpenOn(data, date) || !task.days.includes(weekday)) {
     return { ...base, applies: false, reason: 'Não acontece nesse dia.' };
   }
+  // Alguém fixo no período (ex.: um mês inteiro na conferência de prótese) tem prioridade.
+  const fixed = periodHolderOn(task, date);
+  if (fixed) {
+    const asb = data.asbs.find((x) => x.id === fixed.asbId);
+    const eff = day ?? effectiveDay(data, date);
+    if (asb && asb.active && eff.presentAsbIds.includes(asb.id)) {
+      return { ...base, holders: [{ type: 'asb', asbId: asb.id }], reason: `${asb.name} fica fixa nesta tarefa de ${formatDate(fixed.from)} a ${formatDate(fixed.to)}.` };
+    }
+    const why = !asb ? 'saiu da equipe' : !asb.active ? 'está inativa' : 'está ausente';
+    const rest = resolveByMode(data, task, date, base, day);
+    return { ...rest, reason: `${asb?.name ?? 'A responsável fixa'} (fixa de ${formatDate(fixed.from)} a ${formatDate(fixed.to)}) ${why}. ${rest.reason}` };
+  }
+  return resolveByMode(data, task, date, base, day);
+}
+
+/** Responsável fixo que vale na data, se houver. */
+export function periodHolderOn(task: Task, date: IsoDate): PeriodHolder | undefined {
+  return (task.holdersByPeriod ?? []).find((h) => h.from <= date && date <= h.to);
+}
+
+function resolveByMode(data: AppData, task: Task, date: IsoDate, base: TaskResolution, day?: EffectiveDay): TaskResolution {
   const a = task.assignment;
   switch (a.mode) {
     case 'dentist': {

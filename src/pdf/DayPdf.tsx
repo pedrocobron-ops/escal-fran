@@ -114,18 +114,6 @@ export function DayPdf({ m }: { m: DayPdfModel }) {
           </View>
         )}
 
-        {m.alerts.length > 0 && (
-          <View>
-            <Text style={s.h2} minPresenceAhead={40}>Alertas</Text>
-            {m.alerts.map((a, i) => (
-              <View key={i} style={s.bullet}>
-                <Text style={s.bulletDot}>•</Text>
-                <Text style={[s.bulletText, a.startsWith('CRÍTICO') ? s.warn : {}]}>{a}</Text>
-              </View>
-            ))}
-          </View>
-        )}
-
         </>
         )}
 

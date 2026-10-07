@@ -9,7 +9,7 @@ import { colorMap } from '../colors';
 import { MonthPicker, currentYearMonth, type YearMonth } from '../common/MonthPicker';
 import { MonthCalendar } from '../absences/AbsencesScreen';
 import { PdfButtons } from '../../pdf/PdfButtons';
-import { extraTotalsByAsb } from '../../pdf/model';
+import { describeTaskHolder, extraTotalsByAsb } from '../../pdf/model';
 
 export function MonthScreen() {
   const current = useData();
@@ -22,6 +22,7 @@ export function MonthScreen() {
   const rotations = rotationTasksInMonth(current, ym.year, ym.month).filter((t): t is Task & { assignment: { mode: 'rotation' } } => t.assignment.mode === 'rotation');
   const weekly = rotations.filter((t) => t.assignment.period === 'week');
   const monthly = rotations.filter((t) => t.assignment.period === 'month');
+  const daily = data.tasks.filter((t) => t.assignment.mode !== 'rotation');
   const first = firstOfMonth(ym.year, ym.month);
   const last = lastOfMonth(ym.year, ym.month);
   const absences = absencesBetween(data, first, last).sort((a, b) => a.from.localeCompare(b.from));
@@ -101,6 +102,28 @@ export function MonthScreen() {
             </tbody>
           </table>
         )}
+      </section>
+
+      <section className="card">
+        <h2>Tarefas diárias e responsáveis</h2>
+        {daily.length === 0 ? (
+          <p className="muted">Nenhuma tarefa diária cadastrada.</p>
+        ) : (
+          <div className="table-wrap">
+            <table className="table responsive">
+              <thead><tr><th>Tarefa</th><th>Quem faz no mês</th></tr></thead>
+              <tbody>
+                {daily.map((t) => (
+                  <tr key={t.id}>
+                    <td><strong>{t.name}</strong><br /><span className="muted small">{t.when}</span></td>
+                    <td data-label="Quem faz">{describeTaskHolder(current, t, first, last)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <p className="muted small" style={{ marginTop: 6 }}>Para deixar alguém fixa numa tarefa (por exemplo, o mês inteiro na conferência de prótese), use "Responsável fixo por período" em Tarefas e rodízios.</p>
       </section>
 
       <section className="card">

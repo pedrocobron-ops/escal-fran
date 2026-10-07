@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import './styles.css';
 import { browserAdapter } from './store/storage';
+import { SupabaseRemote, SyncedAdapter, readSyncConfig } from './store/sync';
 import { useStore } from './store/useStore';
 import { ConfirmProvider } from './ui/common/Modal';
 import { ErrorBoundary } from './ui/common/ErrorBoundary';
@@ -31,7 +32,9 @@ export function App() {
   const route = useHashRoute();
 
   useEffect(() => {
-    const { adapter, blocked } = browserAdapter();
+    const { adapter: local, blocked } = browserAdapter();
+    const cfg = blocked ? null : readSyncConfig();
+    const adapter = cfg ? new SyncedAdapter(local, new SupabaseRemote(cfg), window.localStorage, (s) => useStore.getState().setSyncStatus(s)) : local;
     void init(adapter, { blocked });
   }, [init]);
 
@@ -74,6 +77,7 @@ export function App() {
           ))}
         </nav>
         <SaveIndicator />
+        <SyncIndicator />
         {loaded && !recovering && <UndoRedo />}
       </header>
       {loaded && !recovering && <Notices />}
@@ -97,6 +101,19 @@ function SaveIndicator() {
   return <span className="save-indicator">Salvamento automático ativo</span>;
 }
 
+/** Estado da nuvem, quando a sincronização está ligada. */
+function SyncIndicator() {
+  const st = useStore((s) => s.syncStatus);
+  if (st.state === 'off') return null;
+  const cls = st.state === 'offline' || st.state === 'error' ? 'save-indicator error' : 'save-indicator';
+  const text =
+    st.state === 'ok' ? `Nuvem OK ${st.at}`
+    : st.state === 'syncing' ? 'Nuvem: sincronizando...'
+    : st.state === 'offline' ? 'Nuvem: sem conexão (salvo aqui)'
+    : 'Nuvem: problema (veja Ajustes)';
+  return <span className={cls} title={st.state === 'offline' || st.state === 'error' ? st.error : 'Sincronização entre aparelhos ligada'}>{text}</span>;
+}
+
 /** Avisos de primeira abertura, armazenamento bloqueado e mudança vinda de outra aba. */
 function Notices() {
   const firstUse = useStore((s) => s.firstUse);
@@ -118,7 +135,7 @@ function Notices() {
         <div className="backup-bar" role="status">
           <span>
             Nenhuma escala salva neste navegador: o app começou pela escala inicial dos documentos.
-            Se você já usava o app em outro aparelho ou navegador, importe o backup em Ajustes.
+            Se você já usava o app em outro aparelho, entre com o código da escala em Ajustes (Sincronizar entre aparelhos) ou importe o backup.
           </span>
           <span className="spacer" />
           <a className="btn sm" href={href('ajustes')}>Importar backup</a>
@@ -128,7 +145,7 @@ function Notices() {
       {external && (
         <div className="backup-bar" role="status">
           <span>
-            Às {external}, a escala foi alterada em outra aba ou janela. Esta tela já mostra a versão nova.
+            Às {external}, a escala foi alterada em outra aba, janela ou aparelho. Esta tela já mostra a versão nova.
             {lostLocal && ' A mudança que você fez aqui no mesmo instante não entrou: confira e refaça se precisar.'}
           </span>
           <span className="spacer" />
@@ -145,8 +162,10 @@ const BACKUP_REMINDER_DAYS = 7;
 function BackupReminder() {
   const lastBackupAt = useStore((s) => s.lastBackupAt);
   const firstChangeAt = useStore((s) => s.firstChangeAt);
+  const synced = useStore((s) => s.syncStatus.state === 'ok');
   const [dismissed, setDismissed] = useState(false);
-  if (dismissed) return null;
+  // Com a nuvem ligada e funcionando, a escala já está guardada fora deste aparelho.
+  if (dismissed || synced) return null;
   // Conta a partir do último backup ou, se nunca houve, da primeira mudança feita aqui.
   const ref = lastBackupAt ?? firstChangeAt;
   if (!ref) return null;

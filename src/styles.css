@@ -71,6 +71,26 @@ a { color: var(--accent); }
 .btn.icon { padding: 4px 6px; line-height: 1; }
 .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
 .toolbar .spacer { flex: 1; }
+.week-nav { display: inline-flex; align-items: center; gap: 4px; }
+.week-label { white-space: nowrap; }
+/* Abas dos dias da semana (segunda a sexta) */
+.day-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: -4px 0 10px; }
+.day-tab {
+  display: inline-flex; flex-direction: column; align-items: center; gap: 1px; min-width: 76px; padding: 6px 10px;
+  border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); cursor: pointer; position: relative; line-height: 1.2;
+}
+.day-tab:hover { background: #f1f3f6; }
+.day-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.day-tab.today:not(.active) { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.day-tab.closed { color: var(--muted); background: #f1f2f4; }
+.day-tab.closed.active { color: #fff; background: #6b7280; border-color: #6b7280; }
+.day-tab-name { font-weight: 700; text-transform: capitalize; }
+.day-tab-date { font-size: 12px; opacity: 0.9; }
+.day-tab-mark { position: absolute; top: -7px; right: -6px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
+.day-tab-mark.bad { background: var(--danger); color: #fff; }
+.day-tab-mark.info { background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent); }
+.day-tab-mark.closed { position: static; background: none; color: var(--muted); font-size: 11px; font-weight: 400; height: auto; padding: 0; }
+.day-tab.active .day-tab-mark.info { background: #fff; }
 .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
 .field label { font-size: 12px; color: var(--muted); }
 .field input, .field select, .field textarea {
@@ -177,8 +197,6 @@ a { color: var(--accent); }
 .alert-list li.aviso { background: var(--warn-soft); border-color: var(--warn); }
 .alert-list li.info { background: var(--accent-soft); border-color: var(--accent); }
 .badge.info { background: var(--accent); color: #fff; }
-.chip.override { outline: 2px dashed rgba(255,255,255,0.85); outline-offset: -3px; }
-.chip.auto { box-shadow: 0 0 0 2px var(--accent); }
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 12px; flex-wrap: wrap; }
 .tabs button { border: 0; background: none; padding: 8px 12px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
 .tabs button.active { border-bottom-color: var(--accent); color: var(--accent); font-weight: 600; }
@@ -241,6 +259,9 @@ a { color: var(--accent); }
   .app-nav a { padding: 6px 8px; font-size: 13px; border: 1px solid var(--line); min-height: 40px; display: inline-flex; align-items: center; }
   .app-main { padding: 10px; }
   .toolbar { gap: 6px; }
+  .day-tab { min-width: 0; flex: 1 1 0; padding: 6px 4px; }
+  .day-tab-date { font-size: 11px; }
+  .week-label { font-size: 13px; }
   .hint-shift { display: none; }
   h1 { font-size: 18px; }
 
@@ -305,3 +326,4 @@ a { color: var(--accent); }
 .board .hcell:first-child { left: 0; z-index: 4; }
 .undo-redo { display: inline-flex; gap: 4px; }
 .hint-touch { display: none; }
+.plain-list li.current { border-color: var(--accent); background: var(--accent-soft); }

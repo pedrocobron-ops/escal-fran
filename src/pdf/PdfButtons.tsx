@@ -33,7 +33,7 @@ function ReadyModal({ ready, onClose }: { ready: Ready; onClose: () => void }) {
   );
 }
 
-/** Botão "PDF deste dia", usado no Modo Dia do quadro. */
+/** Botão "PDF deste dia", usado na escala da semana do quadro. */
 export function DayPdfButton({ date }: { date: IsoDate }) {
   const data = useData();
   const [busy, setBusy] = useState(false);

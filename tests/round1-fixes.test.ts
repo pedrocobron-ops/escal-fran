@@ -32,10 +32,10 @@ describe('ASB livre por folga do dentista é boa substituta', () => {
     d.dentistAbsences = [{ id: 'df', dentistId: 'id003', from: DAY, to: DAY, reason: 'Folga' }];
     d.absences.push(absence({ asbId: ID.laura, from: DAY, to: DAY, substitute: { asbId: ID.pamela } }));
     const pam = coverageSuggestions(d, ID.laura, DAY, DAY, `abs-${ID.laura}-${DAY}`).find((x) => x.name === 'Pâmela')!;
-    expect(pam.covered).toBe(4); // 07h CME, 08h–10h Sala 1
+    expect(pam.covered).toBe(5); // 07h CME, 08h–11h Sala 1 (às 11h ela está de apoio)
     expect(who(d, ID.pamela, 7)).toEqual([expect.objectContaining({ kind: 'cme', origin: 'substitute', coveringFor: ID.laura, movedFrom: 's4' })]);
     expect(who(d, ID.pamela, 9)).toEqual([expect.objectContaining({ kind: 'sala', roomId: 's1', origin: 'substitute' })]);
-    // Onde ela está ocupada (almoço às 11h, Sala 4 com Dr. Marco às 13h e 14h), o apoio cobre: sem choque pendente
+    // Onde ela está ocupada (Sala 4 com Dr. Marco às 13h e 14h), o apoio cobre: sem choque pendente
     const alerts = analyze(d, effectiveDay(d, DAY));
     expect(alerts.filter((a) => a.code === 'substituta-choque')).toEqual([]);
     expect(alerts.filter((a) => a.code === 'sala-sem-asb' && a.roomId === 's1')).toEqual([]);

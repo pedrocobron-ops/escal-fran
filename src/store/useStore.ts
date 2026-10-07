@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { Absence, AppData, DaySlot, DaySlotKind, Id, IsoDate, Slot, SlotKind } from '../domain';
 import { addDays, canAssign, nextProteseRecords, recordHistory, todayIso } from '../domain';
 import { loadInitial, seedData, type StorageAdapter } from './storage';
+import type { SyncStatus } from './sync';
 
 // Passos de desfazer guardados em memória (cada um é uma cópia inteira dos dados).
 const HISTORY_LIMIT = 50;
@@ -52,6 +53,9 @@ interface StoreState {
   externalUpdateAt: string | null;
   /** A última mudança feita aqui foi trocada pela da outra aba (as duas no mesmo instante). */
   externalLostLocal: boolean;
+  /** Sincronização entre aparelhos (nuvem). */
+  syncStatus: SyncStatus;
+  setSyncStatus(s: SyncStatus): void;
   dismissNotice(which: 'firstUse' | 'externalUpdateAt'): void;
 }
 
@@ -154,6 +158,10 @@ export const useStore = create<StoreState>((set, get) => {
     storageBlocked: false,
     externalUpdateAt: null,
     externalLostLocal: false,
+    syncStatus: { state: 'off' },
+    setSyncStatus(s) {
+      set({ syncStatus: s });
+    },
 
     dismissNotice(which) {
       set(which === 'firstUse' ? { firstUse: false } : { externalUpdateAt: null, externalLostLocal: false });
@@ -224,12 +232,15 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     flush() {
-      if (!saveTimer || !pending) return;
-      clearTimeout(saveTimer);
-      saveTimer = null;
-      const d = pending;
-      pending = null;
-      void saveNow(d);
+      const { adapter } = get();
+      if (saveTimer && pending) {
+        clearTimeout(saveTimer);
+        saveTimer = null;
+        const d = pending;
+        pending = null;
+        void saveNow(d);
+      }
+      adapter?.flush?.();
     },
 
     // Desfazer e refazer contam como mudanças de hoje: o histórico parte do atual, para
@@ -362,7 +373,7 @@ export function addExtraHour(draft: AppData, asbId: Id, date: IsoDate, hour: num
   else list.push({ id: newId('hx'), asbId, date, start: hour, end: hour + 1, note, fromBoard: true });
 }
 
-// ---- Ajustes de um dia (Modo Dia) ----
+// ---- Ajustes de um dia (escala da semana) ----
 
 /**
  * Define exatamente o que a ASB faz nessas horas nessa data. `entries` vazio = livre.

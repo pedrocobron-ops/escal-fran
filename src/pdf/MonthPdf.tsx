@@ -124,6 +124,24 @@ export function MonthPdf({ m }: { m: MonthPdfModel }) {
         )}
         <Text style={[s.small, s.muted, { marginTop: 3 }]}>Semanas contadas de segunda a sexta. {weekCols} semana{weekCols > 1 ? 's' : ''} tocam o mês.</Text>
 
+        {m.taskRows.length > 0 && (
+          <View style={[s.table, { marginTop: 6 }]}>
+            <View style={[s.row, s.head]} fixed>
+              <Text style={[s.cell, { flexBasis: 150, flexGrow: 0 }]}>Tarefa diária</Text>
+              <Text style={s.cell}>Quem faz no mês</Text>
+            </View>
+            {m.taskRows.map((r) => (
+              <View style={s.row} key={r.task} wrap={false}>
+                <View style={[s.cell, { flexBasis: 150, flexGrow: 0 }]}>
+                  <Text style={s.bold}>{r.task}</Text>
+                  <Text style={[s.small, s.muted]}>{r.when}</Text>
+                </View>
+                <Text style={s.cell}>{r.who}</Text>
+              </View>
+            ))}
+          </View>
+        )}
+
         <View wrap={false}>
           <Text style={s.h2}>4. Regras fixas</Text>
           {m.rules.map((r, i) => (

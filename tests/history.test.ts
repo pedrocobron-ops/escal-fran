@@ -106,7 +106,7 @@ describe('histórico da escala (dias passados)', () => {
     expect(resolveTask(d, cme, '2026-09-10').holders).toEqual([{ type: 'asb', asbId: ID.laura }]);
     // alertas do passado usam a Laura pelo nome (hora extra dela 16h–17h ficou sem atribuição)
     const a10 = analyze(d, effectiveDay(d, '2026-09-10'));
-    expect(a10.map((a) => a.code).sort()).toEqual(['hora-extra-sem-atribuicao', 'sala-sem-asb']);
+    expect(a10.filter((a) => a.code !== 'sem-almoco').map((a) => a.code).sort()).toEqual(['hora-extra-sem-atribuicao', 'sala-sem-asb']);
     expect(a10.find((a) => a.code === 'hora-extra-sem-atribuicao')?.message).toContain('Laura');
   });
 

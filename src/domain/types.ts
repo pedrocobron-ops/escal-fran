@@ -66,6 +66,14 @@ export type TaskMode =
   | { mode: 'rotation'; period: RotationPeriod; order: Id[]; startDate: IsoDate }
   | { mode: 'fixed'; asbIds: Id[] };
 
+/** Alguém fixo na tarefa durante um período (ex.: "Laura na conferência de prótese o mês inteiro"). */
+export interface PeriodHolder {
+  id: Id;
+  asbId: Id;
+  from: IsoDate;
+  to: IsoDate;
+}
+
 export interface Task {
   id: Id;
   name: string;
@@ -74,6 +82,8 @@ export interface Task {
   /** Dias da semana em que a tarefa acontece. */
   days: number[];
   assignment: TaskMode;
+  /** Responsáveis fixos por período; têm prioridade sobre `assignment` nas datas que cobrem. */
+  holdersByPeriod?: PeriodHolder[];
 }
 
 export type AbsenceReason = 'Férias' | 'Atestado' | 'Falta' | 'Folga' | 'Licença' | 'Outro';
@@ -110,7 +120,7 @@ export interface ExtraShift {
   note?: string;
   /** Quando a hora extra foi criada para cobrir uma ausência, o id dela. */
   absenceId?: Id;
-  /** Registrada soltando a ficha fora do horário no Modo Dia (sai junto com "Limpar ajustes do dia"). */
+  /** Registrada soltando a ficha fora do horário na escala da semana (sai junto com "Limpar ajustes do dia"). */
   fromBoard?: boolean;
 }
 
@@ -145,7 +155,7 @@ export interface DaySlot {
 }
 
 /** Campos da estrutura da escala que mudam com o tempo e precisam de histórico. */
-export const STRUCTURE_KEYS = ['rooms', 'dentists', 'asbs', 'base', 'tasks', 'openDays', 'rules'] as const;
+export const STRUCTURE_KEYS = ['rooms', 'dentists', 'asbs', 'base', 'tasks', 'openDays', 'rules', 'lunchWindow'] as const;
 export type StructureKey = (typeof STRUCTURE_KEYS)[number];
 
 /**
@@ -161,6 +171,13 @@ export interface StructureSnapshot {
   tasks?: Task[];
   openDays?: number[];
   rules?: string[];
+  lunchWindow?: LunchWindow;
+}
+
+/** Horas em que o almoço pode ser marcado: blocos de `start` até `end` (exclusivo). */
+export interface LunchWindow {
+  start: number;
+  end: number;
 }
 
 export interface AppData {
@@ -180,12 +197,14 @@ export interface AppData {
   extraShifts?: ExtraShift[];
   /** Folgas e ausências de dentistas. */
   dentistAbsences?: DentistAbsence[];
-  /** Ajustes feitos no Modo Dia, por data. */
+  /** Ajustes feitos na escala da semana, por data. */
   dayOverrides?: DaySlot[];
   /** Histórico da estrutura, do mais antigo para o mais recente. */
   history?: StructureSnapshot[];
   /** Feriados e outras datas em que o CEO não abre. */
   closedDates?: ClosedDate[];
+  /** Janela do almoço (padrão 12h–15h). */
+  lunchWindow?: LunchWindow;
   /** Primeiro dia em que o app registrou a escala neste navegador. */
   historySince?: IsoDate;
 }
@@ -278,7 +297,8 @@ export type AlertCode =
   | 'asb-duas-salas'
   | 'hora-extra-sem-atribuicao'
   | 'dentista-de-folga'
-  | 'remanejada';
+  | 'remanejada'
+  | 'almoco-fora-do-horario';
 
 export interface Alert {
   level: AlertLevel;

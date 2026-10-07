@@ -29,4 +29,15 @@ Francisco (responsável técnico do CEO, quem usa o sistema) mandou áudios e me
 - **Duas abas abertas**: a aba que ficou para trás passa a mostrar o que foi gravado na outra, em vez de apagar.
 - **Desfazer e Refazer** no topo de todas as telas (também no celular). Desfazer uma importação ou a volta à escala inicial devolve também o histórico.
 - **Editar uma ausência que já começou** mantém as horas extras dos dias que já passaram (já trabalhadas); só o que ainda vai acontecer é refeito.
-- PDF do mês ganhou "Folgas de dentista do mês" e "Horas extras do mês". PDF do dia lista folgas e horas extras e marca "(remanejada)" e "(extra)".
+- PDF do mês ganhou "Folgas de dentista do mês" e "Horas extras do mês". PDF do dia lista folgas e horas extras e marca "(extra)".
+
+## Áudio de 07/10/2026
+
+1. **A ficha mostra só o nome.** Arrastar uma ASB para um horário não escreve mais "ajuste" (nem "remanejada", "hora extra" etc.) na ficha; só "apoio" aparece, quando ela é apoio da sala. O resto fica na dica do mouse e no resumo "Este dia".
+2. **Escala da semana** ao lado da escala base: sempre de segunda a sexta (os dias de funcionamento), com uma aba por dia. Cada dia mostra a escala efetiva da data e o que for arrastado vale só para aquele dia. É a tela que abre por padrão. Substitui o antigo "Modo Dia".
+3. **Salvo em qualquer computador**: sincronização pela nuvem (Supabase) com um "código da escala", em Ajustes. Código feito em código fonte, com `docs/supabase.sql`; precisa de um projeto Supabase (ver README).
+4. **Quem está de férias não aparece nos blocos** no período: a escala da semana já tira a pessoa ausente das células (só a escala base, que é o modelo que se repete, mostra todo mundo).
+5. **Conferência de prótese com alguém fixa o mês inteiro**: em Tarefas e rodízios, "Responsável fixo por período" em qualquer tarefa (botões "Este mês" e "Mês que vem"). A Visão do mês e o PDF do mês ganharam a tabela "Tarefas diárias e responsáveis", onde a conferência de prótese aparece escrita com quem faz.
+6. **Duas pessoas por célula, sem perguntas**: soltar uma ASB numa sala que já tem ASB, ou quando ela já está em outra sala naquela hora, entra como "apoio" e ela continua onde estava. Sala livre: entra como ASB da sala. Arrastar a ficha que já está no quadro move; arrastar da lista lateral acrescenta. Quem está de apoio conta como presença (a sala não fica "sem ASB"), e ficar em duas salas virou só informação, não aviso.
+7. **Almoço entre 12h e 15h**: o 11h–12h não existe. A coluna Almoço não aceita ficha fora desse horário (ajustável em Ajustes) e avisa se alguma ASB estiver com almoço fora dele. Na escala inicial, a Pâmela ficou de apoio às 11h e sem almoço marcado até o cliente dizer o horário dela (PERGUNTAS.md, item 4).
+8. **Alertas só na tela**: o PDF do dia não imprime mais a lista de alertas.

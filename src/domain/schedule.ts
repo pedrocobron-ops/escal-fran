@@ -1,20 +1,7 @@
 // Escala efetiva de um dia (5.1) e validações (5.2).
 
 import type {
-  Absence,
-  Alert,
-  AppData,
-  Asb,
-  Dentist,
-  EffectiveDay,
-  EffectiveSlot,
-  ExtraShift,
-  Id,
-  IsoDate,
-  Person,
-  Slot,
-  SlotOrigin,
-  UncoveredSlot,
+  Absence, Alert, AppData, Asb, Dentist, EffectiveDay, EffectiveSlot, ExtraShift, Id, IsoDate, LunchWindow, Person, Slot, SlotOrigin, UncoveredSlot,
 } from './types';
 import { HOURS, SLOT_KIND_LABEL } from './types';
 import { diffDays, weekdayOf } from './dates';
@@ -43,6 +30,20 @@ export function dentistsAt(dentists: Dentist[], roomId: Id, hour: number): Denti
 /** A ASB pode ter slot nesse bloco? (dentro do contrato) */
 export function canAssign(asb: Pick<Asb, 'start' | 'end'>, hour: number): boolean {
   return hour >= asb.start && hour < asb.end;
+}
+
+/** Janela padrão do almoço: 12h–15h (blocos 12, 13 e 14). O 11h–12h não existe. */
+export const DEFAULT_LUNCH_WINDOW: LunchWindow = { start: 12, end: 15 };
+
+export function lunchWindowOf(data: Pick<AppData, 'lunchWindow'>): LunchWindow {
+  const w = data.lunchWindow;
+  return w && w.end > w.start ? w : DEFAULT_LUNCH_WINDOW;
+}
+
+/** O almoço pode ser marcado nesse bloco? */
+export function canLunchAt(data: Pick<AppData, 'lunchWindow'>, hour: number): boolean {
+  const w = lunchWindowOf(data);
+  return hour >= w.start && hour < w.end;
 }
 
 /** Blocos válidos para a ASB dentro do horário de funcionamento. */
@@ -251,7 +252,8 @@ export function effectiveDay(current: AppData, date: IsoDate): EffectiveDay {
     const roomsThisHour = [...roomsInOrder].sort((a, b) => Number(hadAuto(b.id)) - Number(hadAuto(a.id)));
     for (const room of roomsThisHour) {
       if (!roomActive(room.id, hour)) continue;
-      if (slots.some((e) => e.kind === 'sala' && e.roomId === room.id && e.hour === hour)) continue;
+      // Alguém na sala (como ASB ou de apoio) já basta: o app não coloca mais ninguém.
+      if (slots.some((e) => (e.kind === 'sala' || e.kind === 'apoio') && e.roomId === room.id && e.hour === hour)) continue;
       const gap = uncovered.find((u) => u.slot.kind === 'sala' && u.slot.roomId === room.id && u.slot.hour === hour);
       const best = pickFree(hour, !!gap, (e) => e.kind === 'sala' && e.roomId === room.id);
       if (!best) continue;
@@ -381,7 +383,9 @@ export function analyze(current: AppData, day: EffectiveDay): Alert[] {
     for (const hour of HOURS) {
       const dentists = dentistsAt(day.dentists, room.id, hour);
       const here = day.slots.filter((s) => s.kind === 'sala' && s.roomId === room.id && s.hour === hour);
-      if (dentists.length > 0 && here.length === 0) {
+      const support = day.slots.filter((s) => s.kind === 'apoio' && s.roomId === room.id && s.hour === hour);
+      // Quem está de apoio na sala conta como presença: a sala só fica "sem ASB" se não houver ninguém.
+      if (dentists.length > 0 && here.length === 0 && support.length === 0) {
         alerts.push({
           level: 'critico',
           code: 'sala-sem-asb',
@@ -422,11 +426,21 @@ export function analyze(current: AppData, day: EffectiveDay): Alert[] {
     const asb = asbById.get(asbId);
     if (!asb) continue;
     const mine = day.slots.filter((s) => s.who.type === 'asb' && s.who.asbId === asbId);
+    const lw = lunchWindowOf(data);
     if (asb.lunch && !mine.some((s) => s.kind === 'almoco')) {
       alerts.push({
         level: 'critico',
         code: 'sem-almoco',
-        message: `${asb.name} precisa de 1 hora de almoço e não tem bloco de almoço.`,
+        message: `${asb.name} precisa de 1 hora de almoço e não tem bloco de almoço (entre ${formatHour(lw.start)} e ${formatHour(lw.end)}).`,
+        asbId,
+      });
+    }
+    for (const s of mine.filter((x) => x.kind === 'almoco' && !canLunchAt(data, x.hour))) {
+      alerts.push({
+        level: 'aviso',
+        code: 'almoco-fora-do-horario',
+        message: `${asb.name} está com almoço às ${formatHour(s.hour)}, fora do horário de almoço (${formatHour(lw.start)} às ${formatHour(lw.end)}). Mova o bloco.`,
+        hour: s.hour,
         asbId,
       });
     }
@@ -460,8 +474,9 @@ export function analyze(current: AppData, day: EffectiveDay): Alert[] {
       // Sala ou apoio de sala: estar em duas salas diferentes no mesmo horário é dividir-se.
       const rooms = [...new Set(mine.filter((s) => s.hour === hour && s.roomId && (s.kind === 'sala' || s.kind === 'apoio')).map((s) => s.roomId as Id))];
       if (rooms.length > 1) {
+        // Ficar numa sala e de apoio em outra é uso normal: só informa.
         alerts.push({
-          level: 'aviso',
+          level: 'info',
           code: 'asb-duas-salas',
           message: `${asb.name} cobre ${rooms.map(roomName).join(' e ')} ao mesmo tempo às ${formatHour(hour)}.`,
           hour,

@@ -2,8 +2,8 @@
 
 import type { Absence, AppData, Asb, EffectiveDay, IsoDate, Task } from '../domain';
 import {
-  HOURS, OPEN_END, OPEN_START, SLOT_KIND_LABEL, WEEKDAY_LABEL, WEEKDAY_SHORT, absencesBetween, analyze, baseDay, dentistAbsencesBetween, dentistsAt, validExtraShiftsBetween,
-  effectiveDay, firstOfMonth, formatDate, formatDayMonth, formatMonth, formatRange, isExternalSubstitute, isTeamSubstitute,
+  HOURS, OPEN_END, OPEN_START, SLOT_KIND_LABEL, WEEKDAY_LABEL, WEEKDAY_SHORT, absencesBetween, baseDay, dentistAbsencesBetween, dentistsAt, validExtraShiftsBetween,
+  effectiveDay, firstOfMonth, formatDate, formatDayMonth, formatHour, formatMonth, formatRange, isExternalSubstitute, isTeamSubstitute,
   addDays, adjustedSlotCount, dataForDate, findAsbAnywhere, findDentistAnywhere, isOpenOn, lastOfMonth, monthRotation, rotationTasksInMonth, resolveTask, todayIso, weekdayOf, weeksOfMonth,
 } from '../domain';
 
@@ -52,6 +52,8 @@ export interface MonthPdfModel {
   weekHeaders: string[];
   weeklyRows: RotationRow[];
   monthlyRows: Array<{ task: string; when: string; holder: string }>;
+  /** Tarefas que não são rodízio (conferência de prótese, CME etc.): quem faz no mês. */
+  taskRows: Array<{ task: string; when: string; who: string }>;
   rules: string[];
   absences: AbsenceRow[];
   dentistAbsences: Array<{ dentist: string; period: string; reason: string }>;
@@ -62,13 +64,9 @@ export interface MonthPdfModel {
 }
 
 /** Marcas curtas depois do nome: remanejada, hora extra, ajuste. */
+/** Só a hora extra é marcada no quadro impresso; o resto é o nome (pedido do cliente). */
 function slotMarks(s: EffectiveDay['slots'][number]): string {
-  const m: string[] = [];
-  if (s.origin === 'auto' && (s.movedFrom || s.movedFromKind)) m.push('remanejada');
-  if (s.extra) m.push('hora extra');
-  else if (s.origin === 'auto' && !s.movedFrom && !s.movedFromKind) m.push('colocada pelo app');
-  if (s.origin === 'override') m.push('ajuste');
-  return m.length > 0 ? ` (${m.join(', ')})` : '';
+  return s.extra ? ' (extra)' : '';
 }
 
 /** Horas extras pagas por ASB no período, com o contrato valendo em cada data. */
@@ -140,6 +138,34 @@ function closedDaysLabel(current: AppData, year: number, month: number): string 
   const list = (current.closedDates ?? []).filter((c) => c.date >= first && c.date <= last).sort((a, b) => a.date.localeCompare(b.date));
   if (list.length === 0) return undefined;
   return `Feriados e dias fechados no mês: ${list.map((c) => `${formatDayMonth(c.date)}${c.note ? ` (${c.note})` : ''}`).join(', ')}.`;
+}
+
+/**
+ * Quem faz uma tarefa (que não é rodízio) no período: responsável fixo quando há
+ * ("Laura, 01/10 a 31/10"), senão a regra ("quem estiver na Sala 1 com Dra. Priscila").
+ */
+export function describeTaskHolder(current: AppData, task: Task, from: IsoDate, to: IsoDate): string {
+  const fixed = (task.holdersByPeriod ?? [])
+    .filter((h) => h.from <= to && h.to >= from)
+    .sort((a, b) => a.from.localeCompare(b.from))
+    .map((h) => {
+      const name = findAsbAnywhere(current, h.asbId)?.name ?? '?';
+      const whole = h.from <= from && h.to >= to;
+      return whole ? `${name} (o mês inteiro)` : `${name} (${formatDayMonth(h.from < from ? from : h.from)} a ${formatDayMonth(h.to > to ? to : h.to)})`;
+    });
+  const a = task.assignment;
+  let rule = '';
+  if (a.mode === 'dentist') {
+    const d = findDentistAnywhere(current, a.dentistId);
+    const room = current.rooms.find((r) => r.id === d?.roomId)?.name;
+    rule = d ? `quem estiver ${room ? `na ${room} ` : ''}com ${d.name} (${formatRange(d.start, d.end)})` : 'quem estiver com o dentista';
+  } else if (a.mode === 'room') {
+    rule = `quem estiver na ${current.rooms.find((r) => r.id === a.roomId)?.name ?? 'sala'} às ${formatHour(a.hour)}`;
+  } else if (a.mode === 'fixed') {
+    rule = a.asbIds.map((id) => findAsbAnywhere(current, id)?.name ?? '?').join(' e ') || 'ninguém definido';
+  }
+  if (fixed.length === 0) return rule;
+  return `${fixed.join('; ')}${rule ? `. Fora desse período: ${rule}` : ''}`;
 }
 
 function periodLabel(a: Absence): string {
@@ -226,8 +252,9 @@ export function roomRows(data: AppData, day: EffectiveDay): { roomNames: string[
       const support = day.slots
         .filter((s) => s.kind === 'apoio' && s.roomId === room.id && s.hour === hour)
         .map((s) => personLabel(data, s.who));
-      const main = asbs.length > 0 ? `ASB: ${asbs.join(', ')}` : ds.length > 0 ? 'SEM ASB' : '';
-      const asb = support.length > 0 ? `${main}${main ? ' ' : ''}(apoio: ${support.join(', ')})` : main;
+      // Quem está de apoio conta como presença: a sala só fica "SEM ASB" se não houver ninguém.
+      const main = asbs.length > 0 ? `ASB: ${asbs.join(', ')}` : support.length > 0 ? `ASB: ${support.join(', ')} (apoio)` : ds.length > 0 ? 'SEM ASB' : '';
+      const asb = asbs.length > 0 && support.length > 0 ? `${main} (apoio: ${support.join(', ')})` : main;
       return { dentist, asb };
     }),
   }));
@@ -289,6 +316,7 @@ export function monthPdfModel(current: AppData, year: number, month: number, now
     weekHeaders: weeks.map((w) => `Semana ${w.index} (${formatDayMonth(w.days[0])} a ${formatDayMonth(w.days[w.days.length - 1])})`),
     weeklyRows,
     monthlyRows,
+    taskRows: data.tasks.filter((t) => t.assignment.mode !== 'rotation').map((t) => ({ task: t.name, when: t.when, who: describeTaskHolder(current, t, first, last) })),
     rules: data.rules,
     absences,
     dentistAbsences,
@@ -312,7 +340,6 @@ export interface DayPdfModel {
   rows: Array<{ hour: string; cells: RoomCell[] }>;
   asbRows: AsbRow[];
   tasks: Array<{ task: string; when: string; holder: string; reason: string }>;
-  alerts: string[];
   generatedAt: string;
 }
 
@@ -349,8 +376,6 @@ export function dayPdfModel(current: AppData, date: IsoDate, now: Date = new Dat
       holder: r.holders.length > 0 ? r.holders.map((p) => personLabel(data, p)).join(' e ') : r.noSubstitute ? 'sem substituta' : 'ninguém',
       reason: r.reason,
     }));
-  const rank = { critico: 0, aviso: 1, info: 2 } as const;
-  const alerts = [...analyze(data, day)].sort((a, b) => rank[a.level] - rank[b.level]).map((a) => `${a.level === 'critico' ? 'CRÍTICO' : a.level === 'aviso' ? 'Aviso' : 'Info'}: ${a.message}`);
   const notes = [
     ...day.dentistsOff.map((d) => {
       const abs = day.dentistAbsences.find((x) => x.dentistId === d.id);
@@ -373,7 +398,6 @@ export function dayPdfModel(current: AppData, date: IsoDate, now: Date = new Dat
     rows: fullRows,
     asbRows: asbRows(data, day),
     tasks,
-    alerts,
     generatedAt: `Gerado em ${formatDate(todayIso(now))} às ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
   };
 }

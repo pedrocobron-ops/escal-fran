@@ -8,17 +8,19 @@ import { ID, absence, seed } from './helpers';
 const byCode = (alerts: Alert[], code: Alert['code']) => alerts.filter((a) => a.code === code);
 
 describe('escala base do seed', () => {
-  it('tem exatamente um alerta: Sala 2 às 18h sem ASB (pergunta 1 do cliente)', () => {
+  it('tem dois alertas em aberto com o cliente: Sala 2 às 18h sem ASB e o almoço da Pâmela (perguntas 1 e 4)', () => {
     const alerts = analyzeBase(seed());
-    expect(alerts).toHaveLength(1);
-    expect(alerts[0]).toMatchObject({ level: 'critico', code: 'sala-sem-asb', hour: 18, roomId: 's2' });
-    expect(alerts[0].message).toContain('Sala 2');
-    expect(alerts[0].message).toContain('18h');
+    expect(alerts.map((a) => a.code).sort()).toEqual(['sala-sem-asb', 'sem-almoco']);
+    const room = alerts.find((a) => a.code === 'sala-sem-asb')!;
+    expect(room).toMatchObject({ level: 'critico', hour: 18, roomId: 's2' });
+    expect(room.message).toContain('Sala 2');
+    expect(room.message).toContain('18h');
+    expect(alerts.find((a) => a.code === 'sem-almoco')).toMatchObject({ level: 'critico', asbId: ID.pamela });
   });
 
-  it('num dia útil comum dá o mesmo alerta', () => {
+  it('num dia útil comum dá os mesmos alertas', () => {
     const alerts = analyzeDate(seed(), '2026-09-14');
-    expect(alerts.map((a) => a.code)).toEqual(['sala-sem-asb']);
+    expect(alerts.map((a) => a.code).sort()).toEqual(['sala-sem-asb', 'sem-almoco']);
   });
 
   it('num dia em que o CEO não abre não há alertas', () => {
@@ -48,8 +50,8 @@ describe('validações críticas', () => {
       s.asbId === ID.laura && s.kind === 'almoco' ? { ...s, kind: 'sala', roomId: 's1' } : s,
     );
     const alerts = analyzeBase(d);
-    expect(byCode(alerts, 'sem-almoco')).toEqual([expect.objectContaining({ level: 'critico', asbId: ID.laura })]);
-    expect(byCode(alerts, 'sem-almoco')[0].message).toContain('Laura');
+    expect(byCode(alerts, 'sem-almoco').filter((a) => a.asbId === ID.laura)).toEqual([expect.objectContaining({ level: 'critico', asbId: ID.laura })]);
+    expect(byCode(alerts, 'sem-almoco').find((a) => a.asbId === ID.laura)?.message).toContain('Laura');
     // Andrea e Nicélia não saem para almoço: sem alerta para elas
     expect(byCode(alerts, 'sem-almoco').some((a) => a.asbId === ID.andrea || a.asbId === ID.nicelia)).toBe(false);
     // e agora Laura e Andrea estão as duas na Sala 1 às 12h
@@ -58,7 +60,7 @@ describe('validações críticas', () => {
 
   it('ASB sem almoço no contrato não gera alerta', () => {
     const alerts = analyzeBase(seed());
-    expect(byCode(alerts, 'sem-almoco')).toEqual([]);
+    expect(byCode(alerts, 'sem-almoco').map((a) => a.asbId)).toEqual([ID.pamela]); // só a Pâmela (horário em aberto)
   });
 });
 
@@ -121,7 +123,7 @@ describe('escala efetiva com ausências', () => {
       'Amanda saiu do Apoio / Recepção para a Sala 1 (13h–15h), cobrindo Laura.',
     ]);
     // Laura ausente não gera "sem almoço" nem "bloco sem atribuição"
-    expect(byCode(alerts, 'sem-almoco')).toEqual([]);
+    expect(byCode(alerts, 'sem-almoco').map((a) => a.asbId)).toEqual([ID.pamela]);
     expect(byCode(alerts, 'bloco-sem-atribuicao')).toEqual([]);
   });
 
@@ -161,22 +163,22 @@ describe('escala efetiva com ausências', () => {
     // Sala 1 às 08h e 09h fica sem ASB (Francisco atende); 07h não tem dentista; 10h a Ana cobre
     expect(byCode(alerts, 'sala-sem-asb').filter((a) => a.roomId === 's1').map((a) => a.hour)).toEqual([8, 9]);
     // Amanda continua com almoço e sem buracos no contrato
-    expect(byCode(alerts, 'sem-almoco')).toEqual([]);
+    expect(byCode(alerts, 'sem-almoco').map((a) => a.asbId)).toEqual([ID.pamela]);
     expect(byCode(alerts, 'bloco-sem-atribuicao')).toEqual([]);
   });
 
   it('substituta que já está em sala ou no almoço gera choque de sala', () => {
     const d = seed();
-    // Pâmela cobre Laura: Pâmela está na Sala 4 de manhã e almoça às 11h.
+    // Pâmela cobre Laura: Pâmela está na Sala 4 de manhã e livre (apoio) às 11h.
     d.absences.push(absence({ asbId: ID.laura, from: '2026-09-14', to: '2026-09-14', substitute: { asbId: ID.pamela } }));
     const day = effectiveDay(d, '2026-09-14');
     const reasons = Object.fromEntries(day.uncovered.map((u) => [u.slot.hour, u.busyWith ?? u.reason]));
-    expect(reasons).toEqual({ 7: 'sala', 8: 'sala', 9: 'sala', 10: 'sala', 11: 'almoco', 13: 'sala', 14: 'sala' });
+    expect(reasons).toEqual({ 7: 'sala', 8: 'sala', 9: 'sala', 10: 'sala', 13: 'sala', 14: 'sala' });
     const alerts = analyze(d, day);
     expect(byCode(alerts, 'substituta-choque').find((a) => a.hour === 8)?.message).toContain('outra sala');
-    // às 11h ela almoça, mas a Amanda sai do apoio e cobre: o choque não fica pendente
+    // às 11h ela está livre e herda a Sala 1 da Laura
     expect(byCode(alerts, 'substituta-choque').find((a) => a.hour === 11)).toBeUndefined();
-    expect(byCode(alerts, 'remanejada').some((a) => a.hour === 11 && a.message.startsWith('Amanda saiu do Apoio'))).toBe(true);
+    expect(day.slots.find((s) => s.who.type === 'asb' && s.who.asbId === ID.pamela && s.hour === 11)).toMatchObject({ kind: 'sala', roomId: 's1', origin: 'substitute' });
     // Pâmela não perdeu nenhum slot dela
     expect(day.slots.filter((s) => s.who.type === 'asb' && s.who.asbId === ID.pamela)).toHaveLength(9);
   });
@@ -203,7 +205,7 @@ describe('escala efetiva com ausências', () => {
     expect(carla.find((s) => s.hour === 8)).toMatchObject({ kind: 'sala', roomId: 's1', origin: 'external', coveringFor: ID.laura });
     expect(day.uncovered).toEqual([]);
     const alerts = analyze(d, day);
-    expect(alerts.map((a) => a.code)).toEqual(['sala-sem-asb']); // só o da Sala 2 às 18h
+    expect(alerts.map((a) => a.code).sort()).toEqual(['sala-sem-asb', 'sem-almoco']); // Sala 2 às 18h e o almoço da Pâmela
   });
 
   it('ausência fora da data não muda nada', () => {

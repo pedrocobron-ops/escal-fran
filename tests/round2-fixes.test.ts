@@ -21,34 +21,34 @@ const rooms = (d: AppData, asbId: string, hour: number) =>
 describe('quadro: mover uma ficha', () => {
   it('mover uma das duas salas na mesma hora mantém a outra', () => {
     const d = seed();
-    placeInBase(d, { asbId: ID.laura, hours: [10], target: { kind: 'sala', roomId: 's2' }, additive: true });
+    placeInBase(d, { asbId: ID.laura, hours: [10], target: { kind: 'sala', roomId: 's2' }, keepOthers: true });
     expect(rooms(d, ID.laura, 10)).toEqual(['sala:s1', 'sala:s2']);
     // arrasta a ficha da Sala 2 para a Sala 3, mesma hora
-    placeInBase(d, { asbId: ID.laura, hours: [10], target: { kind: 'sala', roomId: 's3' }, additive: false, orig: { hour: 10, kind: 'sala', roomId: 's2' } });
+    placeInBase(d, { asbId: ID.laura, hours: [10], target: { kind: 'sala', roomId: 's3' }, keepOthers: false, orig: { hour: 10, kind: 'sala', roomId: 's2' } });
     expect(rooms(d, ID.laura, 10)).toEqual(['sala:s1', 'sala:s3']);
   });
 
   it('mover para outra hora tira só aquela ficha da hora de origem', () => {
     const d = seed();
-    placeInBase(d, { asbId: ID.laura, hours: [10], target: { kind: 'sala', roomId: 's2' }, additive: true });
-    placeInBase(d, { asbId: ID.laura, hours: [9], target: { kind: 'sala', roomId: 's2' }, additive: false, orig: { hour: 10, kind: 'sala', roomId: 's2' } });
+    placeInBase(d, { asbId: ID.laura, hours: [10], target: { kind: 'sala', roomId: 's2' }, keepOthers: true });
+    placeInBase(d, { asbId: ID.laura, hours: [9], target: { kind: 'sala', roomId: 's2' }, keepOthers: false, orig: { hour: 10, kind: 'sala', roomId: 's2' } });
     expect(rooms(d, ID.laura, 10)).toEqual(['sala:s1']);
     expect(rooms(d, ID.laura, 9)).toEqual(['sala:s2']);
   });
 
-  it('"Cobrir as duas" mantém as outras salas; "Mover" tira', () => {
+  it('apoio (mantém as outras salas) e ASB da sala (sai do resto)', () => {
     const d = seed();
-    placeInBase(d, { asbId: ID.laura, hours: [8, 9], target: { kind: 'apoio', roomId: 's2' }, additive: true });
+    placeInBase(d, { asbId: ID.laura, hours: [8, 9], target: { kind: 'apoio', roomId: 's2' }, keepOthers: true });
     expect(rooms(d, ID.laura, 8)).toEqual(['apoio:s2', 'sala:s1']);
-    placeInBase(d, { asbId: ID.laura, hours: [8], target: { kind: 'sala', roomId: 's3' }, additive: true });
-    expect(rooms(d, ID.laura, 8)).toEqual(['apoio:s2', 'sala:s1', 'sala:s3']);
-    placeInBase(d, { asbId: ID.laura, hours: [9], target: { kind: 'sala', roomId: 's3' }, additive: false });
+    placeInBase(d, { asbId: ID.laura, hours: [8], target: { kind: 'apoio', roomId: 's3' }, keepOthers: true });
+    expect(rooms(d, ID.laura, 8)).toEqual(['apoio:s2', 'apoio:s3', 'sala:s1']);
+    placeInBase(d, { asbId: ID.laura, hours: [9], target: { kind: 'sala', roomId: 's3' }, keepOthers: false });
     expect(rooms(d, ID.laura, 9)).toEqual(['sala:s3']);
   });
 
   it('ASB da sala que vira apoio da mesma sala não fica duplicada', () => {
     const d = seed();
-    placeInBase(d, { asbId: ID.laura, hours: [8], target: { kind: 'apoio', roomId: 's1' }, additive: true });
+    placeInBase(d, { asbId: ID.laura, hours: [8], target: { kind: 'apoio', roomId: 's1' }, keepOthers: true });
     expect(rooms(d, ID.laura, 8)).toEqual(['apoio:s1']);
   });
 
@@ -56,7 +56,7 @@ describe('quadro: mover uma ficha', () => {
     const d = seed();
     const date = '2026-09-29';
     const entries = (h: number) => (h === 10 ? [{ kind: 'sala' as const, roomId: 's1' }, { kind: 'sala' as const, roomId: 's2' }] : [{ kind: 'sala' as const, roomId: 's1' }]);
-    placeInDay(d, date, { asbId: ID.laura, hours: [10], target: { kind: 'sala', roomId: 's3' }, additive: false, orig: { hour: 10, kind: 'sala', roomId: 's2' } }, entries, false);
+    placeInDay(d, date, { asbId: ID.laura, hours: [10], target: { kind: 'sala', roomId: 's3' }, keepOthers: false, orig: { hour: 10, kind: 'sala', roomId: 's2' } }, entries, false);
     const at10 = d.dayOverrides!.filter((o) => o.hour === 10).map((o) => o.roomId).sort();
     expect(at10).toEqual(['s1', 's3']);
   });

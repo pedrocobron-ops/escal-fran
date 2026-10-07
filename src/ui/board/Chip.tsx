@@ -24,10 +24,11 @@ export function Chip({ id, label, color, tag, item, external, origin, disabled, 
   // A ficha original fica parada (esmaecida) e quem acompanha o dedo é o DragOverlay.
   // Mover a original fazia a paleta do celular rolar e ficar em branco durante o arrasto.
   const style = { background: external ? undefined : color };
+  // A ficha mostra só o nome (pedido do cliente): origem e motivo ficam na dica.
+  void origin;
   const cls = [
     'chip',
     external ? 'external' : '',
-    origin === 'override' ? 'override' : origin === 'auto' ? 'auto' : '',
     !item || disabled ? 'static' : '',
     draggable.isDragging ? 'dragging' : '',
   ].join(' ');

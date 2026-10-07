@@ -23,6 +23,8 @@ export interface StorageAdapter {
   keepCopy(raw: string): Promise<string>;
   /** Avisa quando outra aba ou janela grava dados novos. Devolve a função para parar de ouvir. */
   subscribe?(onChange: (data: AppData) => void): () => void;
+  /** Envia na hora o que estiver pendente (ao fechar a página). */
+  flush?(): void;
 }
 
 export const COPY_PREFIX = 'escala-ceo:copia:';
@@ -164,11 +166,21 @@ export function repairBackup(json: string): RepairReport {
   if (goodSlots.length < slots.length) removed.push(`${slots.length - goodSlots.length} ficha(s) da escala com dados inválidos`);
   r.base = { slots: goodSlots };
   r.tasks = keep('tasks', 'tarefa', (x) => isStr(x.id) && isStr(x.name) && isArray(x.days) && isRecord(x.assignment) && isStr(x.assignment.mode) && TASK_MODES.includes(x.assignment.mode));
-  for (const t of r.tasks as Array<{ name: string; assignment: { mode: string; startDate?: unknown } }>) {
+  for (const t of r.tasks as Array<{ name: string; assignment: { mode: string; startDate?: unknown }; holdersByPeriod?: unknown }>) {
     if (t.assignment.mode === 'rotation' && !isIso(t.assignment.startDate)) {
       t.assignment.startDate = todayIso();
       removed.push(`data de início do rodízio "${t.name}" era inválida (passou a ser hoje)`);
     }
+    if (t.holdersByPeriod !== undefined) {
+      const list = isArray(t.holdersByPeriod) ? t.holdersByPeriod : [];
+      const good = list.filter((h) => isRecord(h) && isStr(h.id) && isStr(h.asbId) && isIso(h.from) && isIso(h.to) && (h.to as string) >= (h.from as string));
+      if (good.length < list.length || !isArray(t.holdersByPeriod)) removed.push(`responsável fixo da tarefa "${t.name}" com dados inválidos`);
+      t.holdersByPeriod = good;
+    }
+  }
+  if (r.lunchWindow !== undefined && !(isRecord(r.lunchWindow) && isNum(r.lunchWindow.start) && isNum(r.lunchWindow.end) && (r.lunchWindow.end as number) > (r.lunchWindow.start as number))) {
+    delete r.lunchWindow;
+    removed.push('horário de almoço inválido (voltou ao padrão 12h–15h)');
   }
   r.absences = keep('absences', 'ausência', (x) => isStr(x.id) && isStr(x.asbId) && isIso(x.from) && isIso(x.to) && (x.to as string) >= (x.from as string) && isStr(x.reason));
   r.rules = list('rules').filter((x) => typeof x === 'string');
@@ -262,7 +274,16 @@ export function parseBackup(json: string): AppData {
     need(isRecord(t) && isStr(t.id) && isStr(t.name) && isArray(t.days) && isRecord(t.assignment) && isStr(t.assignment.mode) && TASK_MODES.includes(t.assignment.mode), `Tarefa ${i + 1} incompleta.`);
     const a = (t as { assignment: { mode: string; startDate?: unknown } }).assignment;
     if (a.mode === 'rotation') need(isIso(a.startDate), `Tarefa ${i + 1} tem data de início do rodízio inválida.`);
+    const hp = (t as { holdersByPeriod?: unknown }).holdersByPeriod;
+    if (hp !== undefined) {
+      need(isArray(hp), `Tarefa ${i + 1}: responsáveis fixos precisam ser uma lista.`);
+      (hp as unknown[]).forEach((h, j) => need(isRecord(h) && isStr(h.id) && isStr(h.asbId) && isIso(h.from) && isIso(h.to) && (h.to as string) >= (h.from as string), `Tarefa ${i + 1}, responsável fixo ${j + 1} com data inválida.`));
+    }
   });
+  if (raw.lunchWindow !== undefined) {
+    const w = raw.lunchWindow;
+    need(isRecord(w) && isNum(w.start) && isNum(w.end) && (w.end as number) > (w.start as number), 'O horário de almoço é inválido.');
+  }
   (raw.absences as unknown[]).forEach((a, i) => {
     need(isRecord(a) && isStr(a.id) && isStr(a.asbId) && isIso(a.from) && isIso(a.to) && isStr(a.reason), `Ausência ${i + 1} incompleta ou com data inválida.`);
   });

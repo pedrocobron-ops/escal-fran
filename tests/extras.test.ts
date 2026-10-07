@@ -166,8 +166,8 @@ describe('sugestão de cobertura', () => {
     // Nicélia entra às 13h: cobre 13h e 14h (apoio) = 2 por dia; 07h–11h só com hora extra
     expect(byName['Nicélia'].covered).toBe(4);
     expect(byName['Nicélia'].needsExtra).toBe(10);
-    // Pâmela está em sala de manhã e apoio às 15h: cobre nada da Laura
-    expect(byName['Pâmela'].covered).toBe(0);
+    // Pâmela está em sala de manhã; livre (apoio) às 11h: cobre 1 por dia
+    expect(byName['Pâmela'].covered).toBe(2);
     expect(s[0].name).toBe('Amanda');
   });
 
