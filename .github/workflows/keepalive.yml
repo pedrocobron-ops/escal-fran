@@ -17,7 +17,7 @@ jobs:
       - name: Chamada leve ao banco
         run: |
           URL="https://pifuiczrytmizqxzygbi.supabase.co"
-          KEY="[^"  # chave pública (anon), a mesma de src/config/cloud.ts
+          KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBpZnVpY3pyeXRtaXpxeHp5Z2JpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEzNzM2MDQsImV4cCI6MjEwNjk0OTYwNH0.LcJfh9mGhspaUDIFN4u5mtvHJZX0zoDF9GpOCuQta3o"  # chave pública (anon), a mesma de src/config/cloud.ts
           code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL/rest/v1/rpc/escala_version" \
             -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
             -d '{"p_codigo":"keepalive"}')
