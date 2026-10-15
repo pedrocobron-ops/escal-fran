@@ -1,0 +1,25 @@
+name: Manter a nuvem acordada
+
+# O plano gratuito do Supabase pausa o projeto depois de 7 dias sem uso.
+# A cada 3 dias, uma chamada leve ao banco conta como uso e evita a pausa.
+on:
+  schedule:
+    - cron: '17 11 */3 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Chamada leve ao banco
+        run: |
+          URL="https://pifuiczrytmizqxzygbi.supabase.co"
+          KEY="[^"  # chave pública (anon), a mesma de src/config/cloud.ts
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL/rest/v1/rpc/escala_version" \
+            -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+            -d '{"p_codigo":"keepalive"}')
+          echo "Resposta da nuvem: $code"
+          test "$code" = "200"
