@@ -1,0 +1,49 @@
+name: Backup diário da escala
+
+# Todo dia, uma cópia da escala sai do Supabase criptografada com a chave pública
+# (public.backup_cifrado) e é guardada na branch "backups" deste repositório.
+# Só a chave privada (guardada fora do sistema) abre. Ver docs/BACKUP.md.
+on:
+  schedule:
+    - cron: '41 9 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    env:
+      URL: https://pifuiczrytmizqxzygbi.supabase.co
+      KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBpZnVpY3pyeXRtaXpxeHp5Z2JpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEzNzM2MDQsImV4cCI6MjEwNjk0OTYwNH0.LcJfh9mGhspaUDIFN4u5mtvHJZX0zoDF9GpOCuQta3o
+    steps:
+      - name: Baixar o backup criptografado
+        run: |
+          curl -sS -m 60 --fail -X POST "$URL/rest/v1/rpc/backup_cifrado" \
+            -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' -d '{}' \
+            | python3 -c "import sys,json;sys.stdout.write(json.load(sys.stdin))" > backup.asc
+          head -1 backup.asc | grep -q "BEGIN PGP MESSAGE"
+          wc -c backup.asc
+      - name: Guardar na branch backups
+        run: |
+          git config --global user.name "backup-escala"
+          git config --global user.email "backup-escala@users.noreply.github.com"
+          if git ls-remote --exit-code --heads "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" backups >/dev/null; then
+            git clone --depth 1 --branch backups "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" repo
+          else
+            mkdir repo && cd repo && git init -b backups && git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" && cd ..
+            printf '# Backups criptografados da escala\n\nUm arquivo por dia. Para abrir, ver docs/BACKUP.md na branch principal.\n' > repo/README.md
+          fi
+          mkdir -p repo/backups
+          cp backup.asc "repo/backups/escala-$(date -u +%Y-%m-%d).asc"
+          cd repo
+          # guarda os últimos 120 dias
+          ls backups/*.asc | sort | head -n -120 | xargs -r git rm -q
+          git add -A
+          git commit -q -m "Backup $(date -u +%Y-%m-%d)" || echo "nada novo"
+          git push -q origin backups
