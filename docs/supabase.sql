@@ -282,3 +282,23 @@ revoke all on function public.cleo_conversa_get() from public, anon;
 revoke all on function public.cleo_conversa_put(jsonb) from public, anon;
 grant execute on function public.cleo_conversa_get() to authenticated;
 grant execute on function public.cleo_conversa_put(jsonb) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Manter o projeto gratuito ativo: o workflow keepalive grava aqui todo dia.
+-- ---------------------------------------------------------------------------
+create table if not exists escala_ceo.manter_ativo (
+  id integer primary key default 1,
+  em timestamptz not null default now(),
+  vezes bigint not null default 0
+);
+alter table escala_ceo.manter_ativo enable row level security;
+
+create or replace function public.manter_ativo()
+returns timestamptz
+language sql security definer set search_path = escala_ceo, public as $$
+  insert into escala_ceo.manter_ativo (id, em, vezes) values (1, now(), 1)
+  on conflict (id) do update set em = now(), vezes = escala_ceo.manter_ativo.vezes + 1
+  returning em;
+$$;
+revoke all on function public.manter_ativo() from public;
+grant execute on function public.manter_ativo() to anon;

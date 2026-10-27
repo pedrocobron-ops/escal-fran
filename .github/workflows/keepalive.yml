@@ -1,10 +1,12 @@
 name: Manter a nuvem acordada
 
 # O plano gratuito do Supabase pausa o projeto depois de 7 dias sem uso.
-# A cada 3 dias, uma chamada leve ao banco conta como uso e evita a pausa.
+# Só leitura não bastou (o projeto pausou mesmo com consultas a cada 3 dias):
+# todo dia, grava um registro no banco (public.manter_ativo) e entra pela
+# autenticação, o que conta como uso de verdade.
 on:
   schedule:
-    - cron: '17 11 */3 * *'
+    - cron: '17 11 * * *'
   workflow_dispatch:
 
 permissions:
@@ -18,8 +20,9 @@ jobs:
         run: |
           URL="https://pifuiczrytmizqxzygbi.supabase.co"
           KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBpZnVpY3pyeXRtaXpxeHp5Z2JpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEzNzM2MDQsImV4cCI6MjEwNjk0OTYwNH0.LcJfh9mGhspaUDIFN4u5mtvHJZX0zoDF9GpOCuQta3o"  # chave pública (anon), a mesma de src/config/cloud.ts
-          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL/rest/v1/rpc/escala_version" \
-            -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
-            -d '{"p_codigo":"keepalive"}')
-          echo "Resposta da nuvem: $code"
-          test "$code" = "200"
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL/rest/v1/rpc/manter_ativo" \
+            -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' -d '{}')
+          echo "Gravação no banco: $code"
+          auth=$(curl -s -o /dev/null -w '%{http_code}' "$URL/auth/v1/health" -H "apikey: $KEY")
+          echo "Autenticação: $auth"
+          test "$code" = "200" -o "$code" = "204"
