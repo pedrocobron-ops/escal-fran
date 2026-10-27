@@ -302,3 +302,77 @@ language sql security definer set search_path = escala_ceo, public as $$
 $$;
 revoke all on function public.manter_ativo() from public;
 grant execute on function public.manter_ativo() to anon;
+
+-- ---------------------------------------------------------------------------
+-- 27/10/2026, depois da perda de dados: histórico de versões e gravação segura.
+-- Toda gravação guarda a versão anterior em escala_ceo.escalas_versoes, e
+-- minha_escala_put só substitui uma escala existente se disser qual versão
+-- está substituindo (senão "conflito": o app pergunta qual vale).
+-- ---------------------------------------------------------------------------
+create table if not exists escala_ceo.escalas_versoes (
+  id bigserial primary key,
+  codigo text not null,
+  data jsonb not null,
+  updated_at timestamptz not null,
+  guardada_em timestamptz not null default now()
+);
+create index if not exists escalas_versoes_codigo on escala_ceo.escalas_versoes (codigo, guardada_em desc);
+alter table escala_ceo.escalas_versoes enable row level security;
+
+create or replace function escala_ceo.guarda_versao() returns trigger
+language plpgsql security definer set search_path = escala_ceo, public as $$
+begin
+  if old.data is distinct from new.data then
+    insert into escala_ceo.escalas_versoes (codigo, data, updated_at) values (old.codigo, old.data, old.updated_at);
+  end if;
+  return new;
+end;
+$$;
+create or replace trigger guarda_versao before update on escala_ceo.escalas for each row execute function escala_ceo.guarda_versao();
+
+create or replace function public.minha_escala_put(p_data jsonb, p_expected timestamptz default null)
+returns timestamptz
+language plpgsql security definer set search_path = escala_ceo, public as $$
+declare
+  ts timestamptz;
+  atual timestamptz;
+  chave text;
+begin
+  if auth.uid() is null then
+    raise exception 'sem login';
+  end if;
+  if pg_column_size(p_data) > 8 * 1024 * 1024 then
+    raise exception 'escala grande demais';
+  end if;
+  chave := 'user:' || auth.uid()::text;
+  select e.updated_at into atual from escala_ceo.escalas e where e.codigo = chave for update;
+  if atual is not null and (p_expected is null or atual <> p_expected) then
+    raise exception 'conflito: a nuvem tem uma versao mais nova';
+  end if;
+  insert into escala_ceo.escalas (codigo, data, updated_at) values (chave, p_data, now())
+  on conflict (codigo) do update set data = excluded.data, updated_at = now()
+  returning updated_at into ts;
+  return ts;
+end;
+$$;
+
+create or replace function public.minhas_versoes()
+returns table (id bigint, updated_at timestamptz, guardada_em timestamptz, ausencias int, trocas int, extras int, semana int, dia int)
+language sql security definer set search_path = escala_ceo, public as $$
+  select v.id, v.updated_at, v.guardada_em,
+    jsonb_array_length(coalesce(v.data->'absences','[]')), jsonb_array_length(coalesce(v.data->'shiftChanges','[]')),
+    jsonb_array_length(coalesce(v.data->'extraShifts','[]')), jsonb_array_length(coalesce(v.data->'weekOverrides','[]')),
+    jsonb_array_length(coalesce(v.data->'dayOverrides','[]'))
+  from escala_ceo.escalas_versoes v
+  where auth.uid() is not null and v.codigo = 'user:' || auth.uid()::text
+  order by v.guardada_em desc limit 100;
+$$;
+create or replace function public.minha_versao(p_id bigint)
+returns jsonb
+language sql security definer set search_path = escala_ceo, public as $$
+  select v.data from escala_ceo.escalas_versoes v where auth.uid() is not null and v.id = p_id and v.codigo = 'user:' || auth.uid()::text;
+$$;
+revoke all on function public.minhas_versoes() from public, anon;
+revoke all on function public.minha_versao(bigint) from public, anon;
+grant execute on function public.minhas_versoes() to authenticated;
+grant execute on function public.minha_versao(bigint) to authenticated;
