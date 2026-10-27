@@ -99,6 +99,15 @@ export class SyncError extends Error {
 }
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
+
+/** Erro ao obter o token: só "sem sessão" pede login de novo; nuvem fora do ar é só falta de conexão. */
+function tokenError(e: unknown): SyncError {
+  const kind = (e as { kind?: string } | null)?.kind;
+  const msg = e instanceof Error ? e.message : 'Entre de novo.';
+  if (kind === 'sem-sessao' || kind === 'credenciais') return new SyncError(msg, false, false, true);
+  return new SyncError(msg, true);
+}
+
 /** Devolve um token de acesso válido; com force, renova antes (depois de um 401). */
 export type TokenProvider = (force?: boolean) => Promise<string>;
 
@@ -116,7 +125,7 @@ export class SupabaseRemote {
     try {
       token = await this.token();
     } catch (e) {
-      throw new SyncError(e instanceof Error ? e.message : 'Entre de novo.', false, false, true);
+      throw tokenError(e);
     }
     const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : undefined;
     const timer = ctrl && opts.timeoutMs ? setTimeout(() => ctrl.abort(), opts.timeoutMs) : null;
@@ -149,7 +158,7 @@ export class SupabaseRemote {
           try {
             await this.token(true);
           } catch (e) {
-            throw new SyncError(e instanceof Error ? e.message : 'Entre de novo.', false, false, true);
+            throw tokenError(e);
           }
           return this.rpc<T>(name, body, opts, false);
         }
@@ -217,6 +226,12 @@ function clock(): string {
 }
 
 const PUSH_DELAY_MS = 1500;
+
+/** As duas escalas têm o mesmo conteúdo? (ignora a ordem das chaves do JSON) */
+function sameContent(a: AppData, b: AppData): boolean {
+  const norm = (v: unknown): unknown => (Array.isArray(v) ? v.map(norm) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v as object).sort().map((k) => [k, norm((v as Record<string, unknown>)[k])])) : v);
+  return JSON.stringify(norm(a)) === JSON.stringify(norm(b));
+}
 const POLL_MS = 30000;
 
 /**
@@ -233,6 +248,10 @@ export class SyncedAdapter implements StorageAdapter {
   private checking = false;
   private meta: SyncMeta;
   private lastSeenRemoteAt: string | null = null;
+  /** A nuvem já foi lida nesta abertura (sabemos se a conta tem escala e qual versão). */
+  private remoteChecked = false;
+  /** Avisado quando a versão deste aparelho foi guardada como cópia antes de usar a da nuvem. */
+  onCopyKept?: () => void;
   /** Versão da nuvem que bateu de frente com uma mudança daqui (esperando a decisão da pessoa). */
   private conflict: { raw: string; updatedAt: string } | null = null;
 
@@ -336,6 +355,7 @@ export class SyncedAdapter implements StorageAdapter {
       this.fail(e);
       return localResult;
     }
+    this.remoteChecked = true;
     if (!remote) {
       // Código ainda vazio: este aparelho é o primeiro; o que estiver aqui sobe no próximo save.
       if (localResult.status === 'ok') {
@@ -367,9 +387,15 @@ export class SyncedAdapter implements StorageAdapter {
       return localResult;
     }
     if (localResult.status === 'invalid') await this.keepCopySafe(localResult.raw);
+    else if (localResult.status === 'ok' && !sameContent(localResult.data, data)) {
+      // A versão deste aparelho é diferente da que veio da nuvem: fica guardada como cópia.
+      await this.keepCopySafe(JSON.stringify(localResult.data));
+      this.onCopyKept?.();
+    }
     await this.local.save(data);
     this.setMeta({ remoteAt: remote.updatedAt, dirty: false });
     this.lastSeenRemoteAt = remote.updatedAt;
+    this.remoteChecked = true;
     this.onStatus({ state: 'ok', at: clock() });
     return { status: 'ok', data };
   }
@@ -410,6 +436,24 @@ export class SyncedAdapter implements StorageAdapter {
     this.pending = null;
     this.pushing = true;
     this.onStatus({ state: 'syncing' });
+    if (!this.remoteChecked) {
+      // A abertura não conseguiu ler a nuvem: antes de gravar, confere o que tem lá.
+      // Se a conta já tem escala, a pessoa decide qual vale (nada é gravado por cima).
+      try {
+        const fresh = await this.remote.get();
+        this.remoteChecked = true;
+        if (fresh && fresh.updatedAt !== this.meta.remoteAt) {
+          this.pushing = false;
+          this.enterConflict(fresh, this.pending ?? data);
+          return;
+        }
+      } catch (e) {
+        this.pending = this.pending ?? data;
+        this.pushing = false;
+        this.fail(e);
+        return;
+      }
+    }
     try {
       const at = await this.remote.put(data, { keepalive, timeoutMs: keepalive ? 4000 : 15000, expected: this.meta.remoteAt });
       this.setMeta({ remoteAt: at, dirty: this.pending !== null });

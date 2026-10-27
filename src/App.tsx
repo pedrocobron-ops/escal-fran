@@ -62,6 +62,7 @@ export function App() {
     if (remote && session) {
       prepareLocalFor(session);
       const adapter = new SyncedAdapter(local, remote, window.localStorage, (s) => useStore.getState().setSyncStatus(s));
+      adapter.onCopyKept = () => window.dispatchEvent(new Event('escala-ceo:copia-guardada'));
       // Versão antiga deste app usava um "código da escala": leva o que estava no código para a conta.
       const legacy = readLegacyCode();
       const start = legacy ? remote.importCode(legacy).then(() => clearLegacyCode(), () => undefined) : Promise.resolve();
@@ -165,6 +166,12 @@ function SyncIndicator() {
 
 /** Avisos de primeira abertura, armazenamento bloqueado e mudança vinda de outra aba. */
 function Notices() {
+  const [copyKept, setCopyKept] = useState(false);
+  useEffect(() => {
+    const on = () => setCopyKept(true);
+    window.addEventListener('escala-ceo:copia-guardada', on);
+    return () => window.removeEventListener('escala-ceo:copia-guardada', on);
+  }, []);
   const firstUse = useStore((s) => s.firstUse);
   const blocked = useStore((s) => s.storageBlocked);
   const external = useStore((s) => s.externalUpdateAt);
@@ -183,6 +190,17 @@ function Notices() {
           <span className="spacer" />
           <button className="btn sm primary" onClick={() => void resolve('cloud')}>Usar a da nuvem</button>
           <button className="btn sm" onClick={() => void resolve('mine')}>Manter a deste aparelho</button>
+        </div>
+      )}
+      {copyKept && (
+        <div className="backup-bar bad" role="alert">
+          <span>
+            A escala deste aparelho era diferente da que está na nuvem. A da nuvem foi aberta, e a deste aparelho ficou guardada
+            em Ajustes, "Cópias de segurança". Se a certa for a deste aparelho, restaure por lá.
+          </span>
+          <span className="spacer" />
+          <a className="btn sm primary" href={href('ajustes')}>Ver cópias</a>
+          <button className="btn sm icon" onClick={() => setCopyKept(false)} aria-label="Fechar aviso">×</button>
         </div>
       )}
       {blocked && (
